@@ -193,7 +193,7 @@ def publish(journal: Journal, repo: Path, branch: str = "dispatch", deploy: bool
                 _git(work, "checkout", "-q", "-B", branch, f"origin/{branch}")
             else:
                 _git(work, "checkout", "-q", "--orphan", branch)
-            _git(work, "rm", "-rq", "--ignore-unmatch", ".")
+            _git(work, "rm", "-rqf", "--ignore-unmatch", ".")
             site = build(journal, Path(tmp) / "build")
             for p in site.iterdir():
                 dest = work / p.name
