@@ -40,11 +40,13 @@ ROOM_REPLY = r"^\[Exits:|It is pitch black|You can't see anything, you're sleepi
 MOVE_REPLY = re.compile("|".join([ROOM_REPLY, BLOCKED.pattern, EXHAUSTED.pattern, FIGHTING.pattern, ASLEEP.pattern,
                                   r"You can't move", r"You're too"]), re.M)
 OPEN_REPLY = r"^Ok\.|It's already open|It's locked|You can't do that|Open what|That's not a container"
+DOWN = re.compile(r"You're resting|You're sleeping|Try standing up|In your dreams|You're sitting")
 RECALL_REPLY = re.compile(ROOM_REPLY + r"|You are completely lost|You are there already|has forsaken you|"
-                          r"finish this fight first", re.M)
+                          r"finish this fight first|" + DOWN.pattern, re.M)
 POSITION_REPLY = r"^You (rest|sit down|stand up|stop resting|wake|are already|can't wake)|^You're "
 TIME_REPLY = r"o'clock"
-FLEE_REPLY = r"You flee from combat|PANIC! You couldn't escape|You aren't fighting anyone|too lethargic to flee"
+FLEE_REPLY = (r"You flee from combat|PANIC! You couldn't escape|You aren't fighting anyone|too lethargic to flee|"
+              r"too stunned|You're resting|You're sleeping|Try standing up|You have been KILLED")
 
 
 class NavError(Exception):
@@ -133,8 +135,18 @@ class Navigator:
             await self.recall()
         return self.here
 
+    async def stand(self) -> None:
+        """Get up (waking first if asleep). Mid-fight this puts the bot back on its feet, so it can flee."""
+        r = await self.bot.do("stand", expect=POSITION_REPLY)
+        if re.search(r"You can't wake|In your dreams", r.text):
+            await self.bot.do("wake", expect=POSITION_REPLY)
+            await self.bot.do("stand", expect=POSITION_REPLY)
+
     async def recall(self) -> None:
         r = await self.bot.do("recall", expect=RECALL_REPLY)
+        if DOWN.search(r.text):
+            await self.stand()
+            r = await self.bot.do("recall", expect=RECALL_REPLY)
         if FIGHTING.search(r.text) or "finish this fight" in r.text:
             raise NavError(f"{self.bot.name} can't recall during a fight")
         if "You are there already" in r.text:
@@ -148,22 +160,43 @@ class Navigator:
         if self.here is None:
             raise NavError(f"{self.bot.name} recalled but couldn't tell where it is: {r.text[-200:]!r}")
 
-    async def escape(self, tries: int = 6) -> None:
-        """Get out of an unwanted fight (survival first): flee until it works, then recall to safety. The room we
-        fled from joins ``avoid``. Raises NavError if every attempt fails."""
+    async def escape(self, tries: int = 8) -> str:
+        """Get out of an unwanted fight (survival first): flee until it works, then recall to safety; the room we
+        fled from joins ``avoid``. Returns "fled", "died" (killed before getting away: the bot is back at the
+        temple) or "calm" (no longer fighting). Raises NavError only if every attempt fails."""
         fled_from = self.here
+        outcome = ""
         for _ in range(tries):
             r = await self.bot.do("flee", expect=FLEE_REPLY)
-            if "You flee from combat" in r.text or "aren't fighting anyone" in r.text:
-                if fled_from is not None:
-                    self.avoid.add(fled_from)
-                self.here = None
-                try:
-                    await self.recall()
-                except NavError:
-                    await self.locate()
-                return
-        raise NavError(f"{self.bot.name} couldn't escape a fight")
+            if "You have been KILLED" in r.text:
+                outcome = "died"
+            elif "You flee from combat" in r.text:
+                outcome = "fled"
+            elif "aren't fighting anyone" in r.text:
+                outcome = "calm"
+            elif DOWN.search(r.text):
+                # tripped, bashed or asleep mid-fight: the fight goes on while the bot is down, so get up and retry
+                await self.stand()
+            elif "too stunned" in r.text:
+                heard = await self.bot.listen(4)  # wait to recover (or to die)
+                if "You have been KILLED" in heard.text:
+                    outcome = "died"
+            if outcome:
+                break
+        if not outcome:
+            raise NavError(f"{self.bot.name} couldn't escape a fight")
+        if fled_from is not None and outcome != "calm":
+            self.avoid.add(fled_from)
+        self.here = None
+        if outcome == "died":
+            await self.bot.do("stand", expect=POSITION_REPLY)
+            await self.locate()
+        else:
+            try:
+                await self.recall()
+            except NavError:
+                await self.locate()
+        return outcome
 
     # -- planning ---------------------------------------------------------------------------------
     def _enterable(self, vnum: int) -> bool:

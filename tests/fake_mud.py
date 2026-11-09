@@ -22,6 +22,12 @@ class FakeMud:
         self.play = None  # optional: command -> output (without prompt), or None to fall through
         self.autoloot = True
         self.moves = 100  # shown in the bot prompt
+        self._writers: list = []
+
+    def push(self, text: str) -> None:
+        """Send unprompted output (someone's tell, a combat round) to every playing client, ending in a prompt."""
+        for w in self._writers:
+            w.write((text + self.bot_prompt()).encode("latin-1"))
 
     def bot_prompt(self) -> str:
         return f"<bot 20/20 100/100 {self.moves}/100 1000 0 0>\n\r"
@@ -98,6 +104,7 @@ class FakeMud:
             out(MOTD)
             await line()
             out(ROOM + prompt)
+            self._writers.append(writer)
             while True:
                 cmd = await line()
                 if self.play and not cmd.startswith(("prompt ", "scroll ")) and cmd != "quit":
@@ -128,6 +135,8 @@ class FakeMud:
         except ConnectionError:
             pass
         finally:
+            if writer in self._writers:
+                self._writers.remove(writer)
             with contextlib.suppress(Exception):
                 await writer.drain()
             writer.close()

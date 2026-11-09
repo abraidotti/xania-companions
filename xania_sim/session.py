@@ -83,6 +83,8 @@ class Bot:
         self.conn: Connection | None = None
         self.prompt: P.Prompt | None = None
         self.created = False
+        # callables (text, prompt) told about every chunk of output read while playing, e.g. events.Recorder.feed
+        self.observers: list = []
 
     # -- lobby -----------------------------------------------------------------------------
     async def enter(self, profile: Profile | None = None, timeout: float = 15) -> Response:
@@ -159,12 +161,30 @@ class Bot:
                 return Response(command, text, self.prompt, complete=False)
             text += before
             if m.re is P.HIT_RETURN:
+                self._tell(before)
                 await self.conn.send("")
                 continue
             self.prompt = P.parse_prompt(m)
+            self._tell(before)
             if pattern is None or pattern.search(text):
                 return Response(command, text, self.prompt)
             text += "\n"
+
+    async def listen(self, timeout: float) -> Response:
+        """Wait (without sending anything) for the MUD's next prompt, e.g. a combat round. ``complete=False`` if
+        none came within ``timeout``; anything unprompted that did arrive stays buffered for the next read."""
+        assert self.conn, "call enter() first"
+        try:
+            before, m = await self.conn.expect(P.PROMPT, timeout=timeout)
+        except Timeout:
+            return Response("", "", self.prompt, complete=False)
+        self.prompt = P.parse_prompt(m)
+        self._tell(before)
+        return Response("", before, self.prompt)
+
+    def _tell(self, text: str) -> None:
+        for observe in self.observers:
+            observe(text, self.prompt)
 
     async def quit(self) -> str:
         """Quit the game (saving the character) and close the connection. Returns the farewell text."""

@@ -50,6 +50,8 @@ def main() -> None:
     h.add_argument("--port", type=int, default=9100)
     h.add_argument("--no-record", action="store_true", help="don't record the run in the lore database")
     sub.add_parser("report", help="print the latest runs and findings")
+    st = sub.add_parser("status", help="each bot's progress: level, xp, kills, deaths, time played")
+    st.add_argument("bot", nargs="?", help="show this bot's recent events and areas too")
     fi = sub.add_parser("findings", help="mark a finding known/ignored/new, or link it to an issue")
     fi.add_argument("finding", help="its signature, or part of it (e.g. do_get)")
     fi.add_argument("--status", choices=["new", "known", "ignored"])
@@ -57,6 +59,9 @@ def main() -> None:
     d = sub.add_parser("dispatch", help="build the dispatch website locally")
     d.add_argument("--out", default="build/dispatch")
     sub.add_parser("publish", help="build the dispatch, push it to the dispatch branch and deploy it to GitHub Pages")
+    from . import play
+
+    play.add_commands(sub)
     args = ap.parse_args()
     if args.cmd == "smoke":
         asyncio.run(smoke(args.port, args.existing))
@@ -76,6 +81,23 @@ def main() -> None:
             print("  bot error:", e)
     elif args.cmd in ("report", "findings", "dispatch", "publish"):
         journal_cmd(args)
+    elif args.cmd in ("companion", "level"):
+        play.run(args)
+    elif args.cmd == "status":
+        status_cmd(args.bot)
+
+
+def _progress(lore):
+    """The event log and the predicted-vs-seen fights (no comparisons if the world can't be loaded)."""
+    from .events import Progress
+    from .fight import FightLog, compare
+
+    try:
+        comparisons = compare(world.load(), FightLog(lore.db))
+    except Exception as e:  # no checkout or Explorer: still build the rest
+        print(f"(no fight comparisons: {e})")
+        comparisons = []
+    return Progress(lore.db), comparisons
 
 
 def journal_cmd(args) -> None:
@@ -101,13 +123,37 @@ def journal_cmd(args) -> None:
                 journal.set_link(sig, args.link)
             print(f"{sig}: updated")
         elif args.cmd == "dispatch":
-            out = D.build(journal, Path(args.out))
+            out = D.build(journal, Path(args.out), *_progress(lore))
             print(f"built {out / 'index.html'}")
         elif args.cmd == "publish":
-            commit = D.publish(journal, Path(__file__).resolve().parents[1])
+            progress, comparisons = _progress(lore)
+            commit = D.publish(journal, Path(__file__).resolve().parents[1], progress=progress, comparisons=comparisons)
             print(f"pushed the dispatch ({commit[:10]}) and started the Pages deployment")
     finally:
         lore.close()
+
+
+def status_cmd(bot: str | None) -> None:
+    from . import dispatch as D
+    from .events import Progress
+    from .store import Lore
+
+    lore = Lore()
+    p = Progress(lore.db)
+    print(f"{'bot':<12} {'class':<8} {'lvl':>3} {'xp':>7} {'gold':>6} {'kills':>5} {'deaths':>6} {'flees':>5} "
+          f"{'hours':>5}  last seen")
+    for s in p.bots():
+        print(f"{s.name:<12} {s.cls:<8} {s.level:>3} {s.xp:>7} {s.gold:>6} {s.kills:>5} {s.deaths:>6} {s.flees:>5} "
+              f"{s.hours:>5.1f}  {D._when(s.last_seen)}")
+    if bot:
+        name = bot.capitalize()
+        print(f"\n{name}'s areas (kills, deaths, xp):")
+        for area, k, d, xp in p.by_area(name):
+            print(f"  {area:<28} {k:>4} {d:>3} {xp:>7}")
+        print(f"\n{name}'s recent events:")
+        for e in p.events(name, ("kill", "died", "level", "fled", "loot", "tell"), limit=20):
+            print(f"  {D._when(e['at'])}  {e['kind']:<6} {e['area'] or '':<20} {e['data']}")
+    lore.close()
 
 
 def lore_cmd(db: str | None, level: int, names: list[str]) -> None:

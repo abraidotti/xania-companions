@@ -168,3 +168,38 @@ async def test_explores_an_area(world):
         assert cov.visited == {3001, 3002, 3003, 3004, 3005, 3006, 3007}
         assert cov.skipped == {3008: "dangerous"} and cov.share == pytest.approx(7 / 8)
         await bot.quit()
+
+
+class TrippedFight(Town):
+    """A fight in which the bot has been tripped: until it stands, flee and recall say it's resting."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.down, self.fighting = True, True
+
+    def __call__(self, cmd: str):
+        if cmd in ("flee", "recall") and self.down:
+            self.commands.append(cmd)
+            return "You're resting. Try standing up first!\n\r"
+        if cmd == "stand":
+            self.down = False
+            self.commands.append(cmd)
+            return "You stand up.\n\r"
+        if cmd == "flee":
+            self.commands.append(cmd)
+            if not self.fighting:
+                return "You aren't fighting anyone.\n\r"
+            self.fighting, self.here = False, 3002
+            return "You flee from combat!\n\r" + self.view()
+        return super().__call__(cmd)
+
+
+async def test_tripped_bot_stands_up_to_flee(world):
+    async with FakeMud() as mud:
+        town = mud.play = TrippedFight(mud, world, start=3006)
+        bot, nav = await _navigator(mud, world)
+        nav.here = 3006
+        assert await nav.escape() == "fled"  # not "calm": being knocked down doesn't end the fight
+        assert [c for c in town.commands if c != "autoloot"] == ["flee", "stand", "flee", "recall"]
+        assert nav.here == 3001 and 3006 in nav.avoid
+        await bot.quit()

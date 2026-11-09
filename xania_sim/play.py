@@ -1,0 +1,118 @@
+"""``python -m xania_sim companion`` and ``python -m xania_sim level``: one bot playing for a while, with everything it
+does recorded in the event log (so ``status`` and the dispatch show it).
+
+Both connect to a MUD that's already running (``--port``; 9000 is the usual one), or start an isolated test MUD
+with ``--test-mud``. A bot's password is ``--password`` (default ``botpass1``); a new name creates the character.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import time
+from pathlib import Path
+
+from . import world as W
+from .companion import Companion
+from .events import Recorder
+from .fight import FightLog, MobIndex
+from .level import Leveller
+from .nav import Navigator
+from .rooms import Fingerprints
+from .server import TestMud
+from .session import Bot, Profile
+from .store import Lore
+
+
+async def _with_mud(test_mud: bool, port: int, play):
+    if not test_mud:
+        return await play("127.0.0.1", port)
+    async with TestMud(port=port) as mud:
+        return await play(mud.host, mud.port)
+
+
+def _setup(bot: Bot, w, cls: str, race: str, lore: Lore, run_id: str):
+    nav = Navigator(bot, w, Fingerprints(w))
+    rec = Recorder(lore.db, bot, cls=cls, race=race, run_id=run_id, room=lambda: nav.here, area_of=W.area_namer(w))
+    lev = Leveller(bot, w, cls, nav, FightLog(lore.db), MobIndex(w), recorder=rec)
+    return nav, rec, lev
+
+
+async def companion(name: str, master: str, cls: str, race: str, minutes: float, port: int, test_mud: bool,
+                    password: str) -> None:
+    w, lore = W.load(), Lore()
+    runs = Path("runs") / f"companion-{time.strftime('%Y%m%d-%H%M%S')}"
+
+    async def play(host, port):
+        bot = Bot(name, password, host=host, port=port, transcript_dir=runs)  # autoloot off: it crashes debug builds (do_get)
+        await bot.enter(Profile(race=race, cls=cls))
+        nav, rec, lev = _setup(bot, w, cls, race, lore, "companion")
+        rec.level = await lev.level()
+        rec.snapshot()
+        comp = Companion(bot, w, cls, master, nav, rec.level, lev)
+        print(f"{bot.name} ({race} {cls}, level {rec.level}) is in. Tell it 'help' from {master.capitalize()}. "
+              f"Transcript: {bot.transcript}")
+        try:
+            await comp.run(seconds=minutes * 60)
+        finally:
+            rec.snapshot()
+            with contextlib.suppress(Exception):
+                await bot.quit()
+
+    try:
+        await _with_mud(test_mud, port, play)
+    finally:
+        lore.close()
+
+
+async def level(name: str, cls: str, race: str, goal: int, minutes: float, port: int, test_mud: bool,
+                password: str) -> None:
+    w, lore = W.load(), Lore()
+    runs = Path("runs") / f"level-{time.strftime('%Y%m%d-%H%M%S')}"
+
+    async def play(host, port):
+        bot = Bot(name, password, host=host, port=port, transcript_dir=runs)  # autoloot off: it crashes debug builds (do_get)
+        await bot.enter(Profile(race=race, cls=cls))
+        nav, rec, lev = _setup(bot, w, cls, race, lore, "level")
+        rec.level = await lev.level()
+        rec.snapshot()
+        try:
+            rep = await lev.run(goal_level=goal, budget=minutes * 60)
+        finally:
+            rec.snapshot()
+            with contextlib.suppress(Exception):
+                await bot.quit()
+        print(f"{bot.name}: level {rep.start_level} -> {rep.level} in {rep.seconds / 60:.0f} min; {rep.kills} kills, "
+              f"{rep.flees} flees, {rep.deaths} deaths, {rep.xp} xp ({rep.reason}). Transcript: {bot.transcript}")
+
+    try:
+        await _with_mud(test_mud, port, play)
+    finally:
+        lore.close()
+
+
+def add_commands(sub) -> None:
+    for cmd, help_ in (("companion", "a bot that follows you and takes orders by tell (tell it 'help')"),
+                       ("level", "a bot that levels on its own, survival first")):
+        p = sub.add_parser(cmd, help=help_)
+        p.add_argument("name", help="the bot's character name (created if new)")
+        if cmd == "companion":
+            p.add_argument("--master", required=True, help="your character's name: the one it takes orders from")
+        else:
+            p.add_argument("--goal", type=int, default=5, help="stop at this level")
+        p.add_argument("--cls", default="cleric" if cmd == "companion" else "knight",
+                       help="mage, cleric, knight or barbarian")
+        p.add_argument("--race", default="human")
+        p.add_argument("--minutes", type=float, default=60)
+        p.add_argument("--port", type=int, default=9000)
+        p.add_argument("--test-mud", action="store_true", help="start an isolated test MUD on --port instead")
+        p.add_argument("--password", default="botpass1")
+
+
+def run(args) -> None:
+    if args.cmd == "companion":
+        asyncio.run(companion(args.name, args.master, args.cls, args.race, args.minutes, args.port, args.test_mud,
+                              args.password))
+    else:
+        asyncio.run(level(args.name, args.cls, args.race, args.goal, args.minutes, args.port, args.test_mud,
+                          args.password))

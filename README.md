@@ -125,6 +125,39 @@ async def test_mage_starts_with_magic_missile(new_bot):
 - Names: the MUD refuses names that match a mob keyword. The `names` fixture (and `xania_sim.names.bot_names`)
   hands out acceptable ones.
 
+## Companions and levelling bots
+
+```
+python -m xania_sim companion Bram --master Sandro          # a cleric that joins your MUD (port 9000) for an hour
+python -m xania_sim companion Bram --master Sandro --cls knight --minutes 180
+python -m xania_sim level Hilda --goal 5                     # a knight that levels on its own, survival first
+python -m xania_sim level Hilda --test-mud --port 9100       # the same on an isolated test MUD
+```
+
+A companion greets you by tell and takes orders the same way (`tell Bram follow`): `follow`, `stay`, `status`,
+`home`, `rest`, `hunt`, `heal`, `buff`, `help`, `bye`. Once it follows you, `group Bram` and it fights beside you
+(autoassist); a healer checks the group and casts its best cure on whoever drops below half their HP. `hunt` sends
+it levelling on its own until you tell it anything else. Bots log in with the password `botpass1` unless you pass
+`--password`; a new name creates the character.
+
+Levelling is survival first: a bot only starts fights predicted (by Explorer, then by the shared fight log once bots
+have seen enough) to cost well under half its HP, skips rooms where others could join in, flees early (standing up
+first if it's been tripped or bashed), rests at the temple, and never goes back to a room it fled from.
+
+## Progress: what each bot has done
+
+```
+python -m xania_sim status                # every bot: level, xp, gold, kills, deaths, flees, hours played
+python -m xania_sim status lvlknia        # one bot's areas and recent events too
+```
+
+Everything a bot reads is parsed into events (kills, deaths with their killer, xp, levels, skill gains, loot, gold,
+tells, says, channels, follows, groups; the messages are Xania's own, with file:line in `events.py`) and stored
+with the room and area it happened in, next to prompt snapshots (HP, mana, moves, xp, gold) taken as they change.
+The dispatch gets a bots table and a page per bot: level over time, where it fought, what it did lately, and its
+fights beside Explorer's predictions (`fight.compare`). The tables (`bots`, `events`, `snapshots`, `fights`) are
+plain SQLite in `state/lore.db`, for other tools to read.
+
 ## How it fits together
 
 | Module | What it does |
@@ -139,6 +172,11 @@ async def test_mage_starts_with_magic_missile(new_bot):
 | `repo.py` | `GameRepo`: the game's git repo (`XANIA_SIM_XANIA`): commit, dirty state, is the build older than the source |
 | `scan.py` | Skills/spells from the repo's source (levels via Explorer; entry text, target, position read here) + fingerprints |
 | `store.py` | `Lore`: shared SQLite (`state/lore.db`): abilities and their changes, raw observations, claims, status per band |
+| `fight.py` | Recognising mobs in a room, `safe_targets`, `fight()` round by round, `recover()`, the shared `FightLog`, `compare` |
+| `level.py` | `Leveller`: go where the safe fights are, fight one at a time, rest, flee and never go back |
+| `companion.py` | `Companion`: orders by tell, follow/group/autoassist, healing the group, status reports, hunting |
+| `play.py` | The `companion` and `level` commands: one bot playing for a while, recorded in the event log |
+| `events.py` | `parse(text)` into events, `Recorder` (watches a bot, stores events + snapshots), `Progress` (reads them) |
 | `nav.py` | `Navigator`: where am I, safe routes (`danger_rooms` from aggressive spawns + `predict_fight`), walking, exploring |
 
 On Windows the MUD runs in WSL. WSL stops a distro once no `wsl.exe` session is attached, so `TestMud` keeps
@@ -152,9 +190,9 @@ their own legend (journals, nemeses, epithets). No LLM needed; there's an option
 - **M1 (done)**: telnet, lobby, prompt, isolated test MUD, smoke scenarios (now the regression suite).
 - **M2 (done)**: navigation with Explorer's map (`locate`, `walk_to`, `explore(area)`), danger-aware.
 - **M3a (done)**: the game repo (version, build check), skill/spell scan with fingerprints, shared lore (SQLite).
-- **M3**: survival and levelling: pick safe fights with `api.predict_fight`, rest, flee, recall, train.
-- **M4**: event log (SQLite), `xania_sim status` and an HTML progress report beside Explorer's predictions.
-- **M5**: companionship: follow, group, assist, heal, party commands by `tell`.
+- **M3 (done)**: survival and levelling: pick safe fights with `api.predict_fight`, rest, flee, recall.
+- **M4 (done)**: event log (SQLite), `xania_sim status`, progress pages on the dispatch beside Explorer's predictions.
+- **M5 (done)**: companionship: follow, group, assist, heal, party commands by `tell`.
 - **M6**: personalities, memory and dialogue (utility AI, intent templates, event-driven chatter).
 - **M7**: legends: journals posted as in-game notes, nemeses, epithets, cursed places, a weekend digest.
 - **M8**: the companions runner (a roster all weekend on your MUD), then the Raspberry Pi.

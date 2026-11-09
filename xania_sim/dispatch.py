@@ -6,8 +6,8 @@
   link to its issue, and every occurrence with its backtrace and the bots' transcript excerpts;
 - ``dispatch.json``: the same data, for other tools.
 
-Pages are plain HTML with inline CSS (light and dark), no scripts. Stories and progress charts join as those
-milestones land. ``publish`` pushes the site to the repo's ``dispatch`` branch and asks GitHub to deploy it to Pages.
+Pages are plain HTML with inline CSS (light and dark), no scripts. Bots' progress pages come from the event log;
+stories join later. ``publish`` pushes the site to the repo's ``dispatch`` branch and asks GitHub to deploy it to Pages.
 """
 
 from __future__ import annotations
@@ -56,6 +56,13 @@ th { color: var(--muted); font-weight: 600; }
 .scroll { overflow-x: auto; }
 details { margin: 8px 0; } summary { cursor: pointer; color: var(--muted); }
 footer { margin-top: 48px; color: var(--muted); font-size: 0.85rem; }
+.chart { width: 100%; height: auto; display: block; }
+.chart .grid { stroke: var(--line); stroke-width: 1; }
+.chart .axis { fill: var(--muted); font-size: 11px; }
+.chart .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
+.chart .dot { fill: var(--accent); stroke: var(--card); stroke-width: 2; }
+.chart .hit { fill: transparent; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
 """
 
 
@@ -116,7 +123,105 @@ def _summary_text(s: dict) -> str:
     return ", ".join(f"{k.replace('_', ' ')} {v}" for k, v in s.items() if not isinstance(v, (dict, list)))
 
 
-def _index(findings: list[dict], runs: list[dict], generated: float) -> str:
+def _bots_table(bots, root: str = "") -> str:
+    if not bots:
+        return "<p>No bots have played yet.</p>"
+    rows = "".join(
+        f"<tr><td><a href='{root}bots/{_e(b.name.lower())}.html'>{_e(b.name)}</a></td><td>{_e(b.race)} {_e(b.cls)}</td>"
+        f"<td class='num'>{b.level}</td><td class='num'>{b.kills}</td><td class='num'>{b.deaths}</td>"
+        f"<td class='num'>{b.flees}</td><td class='num'>{b.hours:.1f}</td><td>{_when(b.last_seen)}</td></tr>"
+        for b in bots)
+    return ("<div class='scroll'><table><tr><th>Bot</th><th>Who</th><th class='num'>Level</th><th class='num'>Kills</th>"
+            "<th class='num'>Deaths</th><th class='num'>Flees</th><th class='num'>Hours</th><th>Last seen</th></tr>"
+            f"{rows}</table></div>")
+
+
+def level_chart(points: list[tuple[float, int]], width: int = 760, height: int = 220) -> str:
+    """Level over time as a step line (levels are whole steps), inline SVG; each level has a hover title."""
+    if not points:
+        return "<p>No snapshots yet.</p>"
+    left, right, top, bottom = 34, 12, 10, 26
+    t0, t1 = points[0][0], max(points[-1][0], points[0][0] + 60)
+    lmax = max(2, max(lv for _, lv in points) + 1)
+    w, h = width - left - right, height - top - bottom
+
+    def x(t):
+        return left + (t - t0) / (t1 - t0) * w
+
+    def y(lv):
+        return top + h - lv / lmax * h
+
+    step = max(1, lmax // 5)
+    grid = "".join(f"<line class='grid' x1='{left}' x2='{width - right}' y1='{y(v):.1f}' y2='{y(v):.1f}'/>"
+                   f"<text class='axis' x='{left - 6}' y='{y(v) + 4:.1f}' text-anchor='end'>{v}</text>"
+                   for v in range(0, lmax + 1, step))
+    span = t1 - t0
+    unit, div = ("h", 3600) if span >= 3 * 3600 else ("min", 60)
+    ticks = "".join(f"<text class='axis' x='{x(t0 + i * span / 4):.1f}' y='{height - 6}' text-anchor='middle'>"
+                    f"{i * span / 4 / div:.0f} {unit}</text>" for i in range(5))
+    d = f"M{x(points[0][0]):.1f},{y(points[0][1]):.1f}"
+    for t, lv in points[1:]:
+        d += f" H{x(t):.1f} V{y(lv):.1f}"
+    d += f" H{x(t1):.1f}"
+    dots = "".join(f"<g><circle class='hit' cx='{x(t):.1f}' cy='{y(lv):.1f}' r='10'/>"
+                   f"<circle class='dot' cx='{x(t):.1f}' cy='{y(lv):.1f}' r='4'/>"
+                   f"<title>level {lv} at {_when(t)}</title></g>" for t, lv in points)
+    return (f"<svg class='chart' viewBox='0 0 {width} {height}' role='img' aria-label='Level over time'>"
+            f"{grid}{ticks}<path class='line' d='{d}'/>{dots}</svg>")
+
+
+_EVENT_TEXT = {
+    "kill": lambda d: f"killed {d.get('victim', '?')}",
+    "died": lambda d: "was killed" + (f" by {d['killer']}" if d.get("killer") else ""),
+    "level": lambda d: f"reached level {d.get('level', '?')}",
+    "fled": lambda d: "fled a fight",
+    "loot": lambda d: f"took {d.get('item', '?')} from {d.get('of', '?')}",
+    "tell": lambda d: f"heard from {d.get('from', '?')}: \u201c{d.get('text', '')}\u201d",
+    "group": lambda d: f"grouped with {d.get('leader') if d.get('who') == 'you' else d.get('who')}",
+}
+
+
+def _bot_page(b, progress, comparisons) -> str:
+    parts = [f"<p class='sub'><a href='../index.html'>{TITLE}</a></p><h1>{_e(b.name)}</h1>",
+             f"<p class='sub'>{_e(b.race)} {_e(b.cls)}, level {b.level}. {b.kills} kills, {b.deaths} deaths, "
+             f"{b.flees} flees in {b.hours:.1f} hours played. First seen {_when(b.created)}.</p>",
+             "<h2>Level over time</h2>", level_chart(progress.levels(b.name))]
+    areas = progress.by_area(b.name)
+    if areas:
+        parts.append("<h2>Where</h2><div class='scroll'><table><tr><th>Area</th><th class='num'>Kills</th>"
+                     "<th class='num'>Deaths</th><th class='num'>XP</th></tr>"
+                     + "".join(f"<tr><td>{_e(a)}</td><td class='num'>{k}</td><td class='num'>{d}</td>"
+                               f"<td class='num'>{xp}</td></tr>" for a, k, d, xp in areas) + "</table></div>")
+    events = progress.events(b.name, tuple(_EVENT_TEXT), limit=40)
+    if events:
+        parts.append("<h2>Recently</h2><ul>" + "".join(
+            f"<li><span class='meta'>{_when(e['at'])}{' · ' + _e(e['area']) if e['area'] else ''}</span> "
+            f"{_e(_EVENT_TEXT[e['kind']](e['data']))}</li>" for e in events) + "</ul>")
+    mine = [c for c in comparisons if c.cls == b.cls]
+    if mine:
+        parts.append(_comparison_table(mine))
+    return _page(b.name, "".join(parts), "../")
+
+
+def _pct(v) -> str:
+    return "" if v is None else f"{v:.0%}"
+
+
+def _comparison_table(rows) -> str:
+    body = "".join(
+        f"<tr><td>{_e(c.name)}</td><td>{_e(c.cls)} {c.level}</td><td class='num'>{c.fights}</td>"
+        f"<td class='num'>{_pct(c.won)}</td><td class='num'>{_pct(c.lost_share)}</td>"
+        f"<td class='num'>{_pct(c.predicted_lost_share)}{' (deadly)' if c.predicted_deadly else ''}</td>"
+        f"<td class='num'>{c.xp:.0f}</td><td class='num'>{'' if c.predicted_xp is None else f'{c.predicted_xp:.0f}'}"
+        "</td></tr>" for c in rows)
+    return ("<h2>Fights: predicted vs seen</h2><p class='sub'>Explorer's prediction for each mob beside what bots "
+            "saw. HP lost is a share of the bot's maximum.</p><div class='scroll'><table><tr><th>Mob</th><th>Bot</th>"
+            "<th class='num'>Fights</th><th class='num'>Won</th><th class='num'>HP lost</th>"
+            "<th class='num'>predicted</th><th class='num'>XP</th><th class='num'>predicted</th></tr>"
+            f"{body}</table></div>")
+
+
+def _index(findings: list[dict], runs: list[dict], generated: float, bots=(), comparisons=()) -> str:
     rows = "".join(
         f"<tr><td>{_when(r['started'])}</td><td>{_e(r['kind'])}</td><td>{_e(r['title'])}</td>"
         f"<td>{_commit(r['commit'])}{' (dirty)' if r['dirty'] else ''}</td><td>{_e(_summary_text(r['summary']))}</td>"
@@ -124,7 +229,9 @@ def _index(findings: list[dict], runs: list[dict], generated: float) -> str:
         for r in runs)
     body = (f"<h1>{TITLE}</h1><p class='sub'>What bots found playing Xania. Updated {_when(generated)}.</p>"
             "<h2>Headlines</h2><ul class='headlines'>" + "".join(f"<li>{h}</li>" for h in _headlines(findings, runs))
-            + "</ul><h2>Findings</h2>" + ("".join(_card(f) for f in findings) or "<p>None yet.</p>")
+            + "</ul><h2>Bots</h2>" + _bots_table(list(bots))
+            + (_comparison_table(list(comparisons)[:20]) if comparisons else "")
+            + "<h2>Findings</h2>" + ("".join(_card(f) for f in findings) or "<p>None yet.</p>")
             + "<h2>Runs</h2><div class='scroll'><table><tr><th>When</th><th>Kind</th><th>Run</th><th>Game version</th>"
             f"<th>Summary</th><th>Findings</th></tr>{rows}</table></div>")
     return _page(TITLE, body)
@@ -155,14 +262,25 @@ def _finding_page(f: dict, occurrences: list[dict]) -> str:
     return _page(f["title"], "".join(parts), "../")
 
 
-def build(journal: Journal, out_dir: Path) -> Path:
+def build(journal: Journal, out_dir: Path, progress=None, comparisons=()) -> Path:
+    """``progress`` (events.Progress) adds the bots table and a page per bot; ``comparisons`` (fight.compare) adds
+    predicted-vs-seen fight tables. Both also go into dispatch.json."""
+    from dataclasses import asdict
+
     out_dir = Path(out_dir)
     if out_dir.exists():
         shutil.rmtree(out_dir)
     (out_dir / "findings").mkdir(parents=True)
     findings, runs, now = journal.findings(), journal.runs(), time.time()
-    (out_dir / "index.html").write_text(_index(findings, runs, now), encoding="utf-8")
-    data = {"generated": now, "findings": [], "runs": runs}
+    bots = progress.bots() if progress is not None else []
+    comparisons = list(comparisons)
+    (out_dir / "index.html").write_text(_index(findings, runs, now, bots, comparisons), encoding="utf-8")
+    if bots:
+        (out_dir / "bots").mkdir()
+    for b in bots:
+        (out_dir / "bots" / f"{b.name.lower()}.html").write_text(_bot_page(b, progress, comparisons), encoding="utf-8")
+    data = {"generated": now, "findings": [], "runs": runs, "bots": [asdict(b) for b in bots],
+            "fights": [asdict(c) for c in comparisons]}
     for f in findings:
         occ = journal.occurrences(f["signature"])
         (out_dir / "findings" / f"{slug(f['signature'])}.html").write_text(_finding_page(f, occ), encoding="utf-8")
@@ -179,7 +297,8 @@ def _git(repo: Path, *args: str, check: bool = True) -> str:
     return r.stdout.strip()
 
 
-def publish(journal: Journal, repo: Path, branch: str = "dispatch", deploy: bool = True) -> str:
+def publish(journal: Journal, repo: Path, branch: str = "dispatch", deploy: bool = True, progress=None,
+            comparisons=()) -> str:
     """Build the site, commit it as the only content of ``branch`` (history kept, one commit per publish), push,
     and run the Pages workflow. Returns the pushed commit."""
     repo = Path(repo)
@@ -194,7 +313,7 @@ def publish(journal: Journal, repo: Path, branch: str = "dispatch", deploy: bool
             else:
                 _git(work, "checkout", "-q", "--orphan", branch)
             _git(work, "rm", "-rqf", "--ignore-unmatch", ".")
-            site = build(journal, Path(tmp) / "build")
+            site = build(journal, Path(tmp) / "build", progress, comparisons)
             for p in site.iterdir():
                 dest = work / p.name
                 shutil.copytree(p, dest) if p.is_dir() else shutil.copy2(p, dest)
