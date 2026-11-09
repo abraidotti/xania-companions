@@ -87,7 +87,7 @@ async def test_a_companion_follows_heals_and_reports(world):
             raise AssertionError(f"timed out; told {party.told}, commands {party.commands}")
 
         await until(lambda: party.told)
-        assert "level 3 cleric" in party.told[0]
+        assert "level 3 cleric" in party.told[0].lower()  # whichever greeting it picked
         mud.push("Hassan tells you 'follow'\n\r")
         await until(lambda: "follow Hassan" in party.commands and len(party.told) >= 2)
         assert party.assist and "group Bram" in party.told[1]
