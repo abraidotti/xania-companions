@@ -34,6 +34,8 @@ STATUSES = ("new", "known", "ignored")
 
 _FRAME = re.compile(r"^#(?P<n>\d+)\s+(?:0x[0-9a-f]+ in )?(?P<func>.+?) \(.*\) at (?P<path>\S+):(?P<line>\d+)\s*$", re.M)
 _SIGNAL = re.compile(r"Program (?:received|terminated with) signal (SIG\w+)")
+_ASAN = re.compile(r"ERROR: AddressSanitizer: (?P<kind>[\w-]+)")
+_ASAN_FRAME = re.compile(r"^\s*#(?P<n>\d+) 0x[0-9a-f]+ in (?P<func>.+?) (?P<path>/\S+):(?P<line>\d+)(?::\d+)?\s*$", re.M)
 _BUG = re.compile(r"\[\*\*\*\*\*\] BUG: (?P<msg>.*)$", re.M)
 
 
@@ -66,8 +68,39 @@ def project_frames(report: str) -> list[Frame]:
     return out
 
 
+def asan_stacks(report: str) -> list[list[Frame]]:
+    """The stacks of an AddressSanitizer report (the bad access, then "freed by", then "previously allocated by"),
+    each as frames in Xania's own source, innermost first."""
+    stacks: list[list[Frame]] = []
+    for block in re.split(r"\n(?=freed by thread|previously allocated by thread)", report):
+        frames = [Frame(m.group("func").split("(")[0].strip(), m.group("path").split("/src/", 1)[1], int(m.group("line")))
+                  for m in _ASAN_FRAME.finditer(block) if "/src/" in m.group("path") and not m.group("path").startswith("/usr/")]
+        stacks.append(frames)
+    return stacks
+
+
+def _asan_finding(report: str, kind: str, repro: str, context: str, transcripts) -> Finding:
+    stacks = asan_stacks(report)
+    access = stacks[0] if stacks else []
+    if access:
+        top = access[0]
+        signature, where = f"crash:asan-{kind}:{top.file}:{top.func}", f"{top.func} ({top.file})"
+    else:
+        signature, where = f"crash:asan-{kind}:{hashlib.sha1(report[-400:].encode()).hexdigest()[:8]}", "unknown code"
+    names = ["Access", "Freed by", "Allocated by"]
+    chains = [f"{names[i] if i < 3 else 'Stack'}: " + " <- ".join(f"{f.func} ({f.file}:{f.line})" for f in st[:6])
+              for i, st in enumerate(stacks) if st]
+    return Finding("crash", signature, f"xania crashed (AddressSanitizer: {kind}) in {where}", "high",
+                   "\n".join(chains), repro,
+                   {"backtrace": report, "frames": [f.__dict__ for f in access[:12]], "context": context,
+                    "transcripts": transcripts or {}})
+
+
 def crash_finding(report: str, repro: str = "", context: str = "", transcripts: dict[str, str] | None = None) -> Finding:
-    """A Finding for a crash report (TestMud.crash_report)."""
+    """A Finding for a crash report (TestMud.crash_report): a gdb backtrace, an assertion, or an AddressSanitizer
+    report (identified by its kind and the first frame in Xania's source)."""
+    if (asan := _ASAN.search(report)) is not None:
+        return _asan_finding(report, asan.group("kind"), repro, context, transcripts)
     sig_m = _SIGNAL.search(report)
     signal = sig_m.group(1) if sig_m else "unknown signal"
     frames = project_frames(report)

@@ -88,3 +88,18 @@ def test_the_dispatch_site_is_built_and_escaped(journal, tmp_path):
     assert "python -m xania_sim hunt" in text and "loot_and_sacrifice_corpse" in text and "Backtrace" in text
     data = json.loads((site / "dispatch.json").read_text(encoding="utf-8"))
     assert data["findings"][0]["count"] == 1 and data["runs"][0]["summary"] == {"fights": 4}
+
+
+def test_an_address_sanitizer_report_becomes_a_finding():
+    from pathlib import Path
+
+    from xania_sim.findings import asan_stacks, crash_finding
+
+    report = (Path(__file__).parent / "asan_report.txt").read_text(encoding="utf-8")  # a real one, 2026-11-09
+    f = crash_finding(report, "python -m pytest scenarios")
+    assert f.signature == "crash:asan-heap-use-after-free:Descriptor.hpp:Descriptor::is_switched"
+    assert f.title == "xania crashed (AddressSanitizer: heap-use-after-free) in Descriptor::is_switched (Descriptor.hpp)"
+    access, freed, allocated = asan_stacks(report)
+    assert [fr.func for fr in access[:4]] == ["Descriptor::is_switched", "Char::get_trust", "Char::is_immortal",
+                                              "char_update"]
+    assert freed[0].func == "DescriptorList::reap_closed" and allocated[0].func == "DescriptorList::create"

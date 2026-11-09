@@ -138,6 +138,11 @@ class TestMud:
         end of its log (an assertion message, for example)."""
         log = self.log("xania").rstrip()
         all_lines = log.splitlines()
+        asan = next((i for i, ln in enumerate(all_lines) if "ERROR: AddressSanitizer" in ln), None)
+        if asan is not None:  # a sanitizer build: its report has the stacks (gdb sees only the exit)
+            end = next((i for i in range(asan, len(all_lines)) if "SUMMARY: AddressSanitizer" in all_lines[i]),
+                       min(len(all_lines) - 1, asan + 160))
+            return "\n".join(all_lines[max(0, asan - 8):end + 1])
         sig = next((i for i, ln in enumerate(all_lines) if ln.startswith(("Program received signal",
                                                                            "Thread", "Program terminated"))
                     and "signal" in ln), None)
@@ -148,7 +153,8 @@ class TestMud:
     def crashed(self) -> bool:
         """Did xania stop on a signal (a crash), as opposed to shutting down normally?"""
         log = self.log("xania")
-        return "received signal" in log or "Assertion" in log or "terminated with signal" in log
+        return ("received signal" in log or "Assertion" in log or "terminated with signal" in log
+                or "ERROR: AddressSanitizer" in log)
 
     async def restart(self) -> None:
         """Stop what's left (doorman) and start again, keeping players and logs."""

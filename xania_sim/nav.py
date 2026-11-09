@@ -43,7 +43,7 @@ OPEN_REPLY = r"^Ok\.|It's already open|It's locked|You can't do that|Open what|T
 DOWN = re.compile(r"You're resting|You're sleeping|Try standing up|In your dreams|You're sitting")
 RECALL_REPLY = re.compile(ROOM_REPLY + r"|You are completely lost|You are there already|has forsaken you|"
                           r"finish this fight first|You failed!|" + DOWN.pattern, re.M)
-POSITION_REPLY = r"^You (rest|sit down|stand up|stop resting|wake|are already|can't wake)|^You're "
+POSITION_REPLY = r"^You (rest|sit down|stand up|stop resting|wake|are already|can't wake|go to sleep)|^You're "
 TIME_REPLY = r"o'clock"
 FLEE_REPLY = (r"You flee from combat|PANIC! You couldn't escape|You aren't fighting anyone|too lethargic to flee|"
               r"too stunned|You're resting|You're sleeping|Try standing up|You have been KILLED")
@@ -246,20 +246,23 @@ class Navigator:
         return None
 
     # -- moving -------------------------------------------------------------------------------------
-    async def _rest_until(self, share: float = 0.9, timeout: float = 600) -> None:
-        """Rest until moves are back to ``share`` of max (regen happens on ticks, every 30 s). If something attacks
-        meanwhile, stop resting and escape."""
+    rest_timeout = 600.0  # longest wait for moves; a Leveller lowers it to what's left of its budget
+
+    async def _rest_until(self, share: float = 0.9, timeout: float | None = None) -> None:
+        """Sleep until moves are back to ``share`` of max (regen comes on ticks; sleeping adds the full Dex bonus to
+        move regen, resting half: update.cpp move_gain). If something attacks meanwhile, wake and escape."""
         from .fight import attacked
 
-        r = await self.bot.do("rest", expect=POSITION_REPLY + "|You are already fighting")
+        r = await self.bot.do("sleep", expect=POSITION_REPLY + "|You are already fighting")
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout
+        deadline = loop.time() + min(timeout or self.rest_timeout, self.rest_timeout)
         hit = attacked(r.text)
         while not hit and self.bot.prompt.moves < share * self.bot.prompt.max_moves and loop.time() < deadline:
             before = self.bot.prompt.hp
             await asyncio.sleep(5)
             r = await self.bot.do("time", expect=TIME_REPLY)  # any harmless command, to read a fresh prompt
             hit = attacked(r.text, before, self.bot.prompt.hp)
+        await self.bot.do("wake", expect=POSITION_REPLY)
         await self.bot.do("stand", expect=POSITION_REPLY)
         if hit:
             await self.escape()

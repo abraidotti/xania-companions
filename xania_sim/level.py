@@ -104,11 +104,23 @@ class Leveller:
             total += self._damage[key]
         return total
 
-    async def rest(self) -> None:
+    async def rest(self, timeout: float = 900) -> None:
         await self.nav.recall()
-        await recover(self.bot, on_attack=self.nav.escape)
+        await recover(self.bot, timeout=timeout, on_attack=self.nav.escape)
 
     flee_at = FLEE_AT  # a persona can set its own (persona.flee_at)
+    practise_skills = True  # spend practice sessions at the nearest guildmaster at the start and after each level
+
+    async def train(self) -> None:
+        if not self.practise_skills:
+            return
+        from .nav import NavError
+        from .trainer import practise
+
+        try:
+            self.last_practice = await practise(self.bot, self.nav, self.world, self.cls)
+        except NavError:
+            await self.nav.locate()
 
     async def run(self, goal_level: int, budget: float = 1800, stop=None) -> LevelReport:
         """Level until ``goal_level``, ``budget`` seconds, or ``stop()`` turns true (checked between fights)."""
@@ -119,6 +131,7 @@ class Leveller:
         rep = LevelReport(level, level)
         if self.nav.here is None:
             await self.nav.locate()
+        await self.train()
         empty_sweeps = 0
         while level < goal_level:
             if time.monotonic() - t0 > budget:
@@ -127,8 +140,10 @@ class Leveller:
             if stop is not None and stop():
                 rep.reason = "stopped"
                 break
+            left = budget - (time.monotonic() - t0)
+            self.nav.rest_timeout = max(30.0, left)  # no rest outlasts the budget
             if self.bot.prompt.hp_share < REST_BELOW:
-                await self.rest()
+                await self.rest(timeout=max(30.0, left))
             if level not in self._danger:
                 self._danger[level] = danger_rooms(self.world, level, self.cls)
             self.nav.avoid = self._danger[level] | self.never
@@ -175,12 +190,13 @@ class Leveller:
                 if r.levelled:
                     level = await self.level()
                     rep.level = level
+                    await self.train()
                 self._targets.pop(level, None)  # observations changed: recompute this level's targets
                 break
             if not fought:
                 empty_sweeps += 1
                 if empty_sweeps >= 3:  # everything nearby is dead: wait for the areas to reset
-                    await self.rest()
+                    await self.rest(timeout=max(30.0, budget - (time.monotonic() - t0)))
                     await asyncio.sleep(30)
                     empty_sweeps = 0
             else:

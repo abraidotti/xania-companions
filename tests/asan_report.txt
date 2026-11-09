@@ -1,0 +1,50 @@
+==92809==ERROR: AddressSanitizer: heap-use-after-free on address 0x7d2ff5d39668 at pc 0x555557254a14 bp 0x7fffffffc990 sp 0x7fffffffc980
+READ of size 8 at 0x7d2ff5d39668 thread T0
+    #0 0x555557254a13 in Descriptor::is_switched() const /home/builder/xania/src/Descriptor.hpp:163
+    #1 0x5555576b924f in Char::get_trust() const /home/builder/xania/src/Char.cpp:118
+    #2 0x5555576b9093 in Char::is_immortal() const /home/builder/xania/src/Char.cpp:113
+    #3 0x5555576322cd in char_update() /home/builder/xania/src/update.cpp:705
+    #4 0x555557636eab in update_handler(Mud&) /home/builder/xania/src/update.cpp:882
+    #5 0x5555570218e3 in MudImpl::game_loop() /home/builder/xania/src/MudImpl.cpp:332
+    #6 0x555556fd2630 in main /home/builder/xania/src/main.cpp:23
+    #7 0x7ffff682a600 in __libc_start_call_main ../sysdeps/nptl/libc_start_call_main.h:59
+    #8 0x7ffff682a717 in __libc_start_main_impl ../csu/libc-start.c:360
+    #9 0x555556fd1984 in _start (/home/builder/xania/install/bin/xania+0x1a7d984) (BuildId: dc389066e01e5035d647bf865b807777d961d23d)
+
+0x7d2ff5d39668 is located 360 bytes inside of 376-byte region [0x7d2ff5d39500,0x7d2ff5d39678)
+freed by thread T0 here:
+    #0 0x7ffff792d89f in operator delete(void*, unsigned long) ../../../../src/libsanitizer/asan/asan_new_delete.cpp:190
+    #1 0x5555570768d9 in std::__new_allocator<std::__detail::_Hash_node<std::pair<unsigned int const, Descriptor>, false> >::deallocate(std::__detail::_Hash_node<std::pair<unsigned int const, Descriptor>, false>*, unsigned long) /usr/include/c++/15/bits/new_allocator.h:172
+    #2 0x55555706cb76 in std::allocator<std::__detail::_Hash_node<std::pair<unsigned int const, Descriptor>, false> >::deallocate(std::__detail::_Hash_node<std::pair<unsigned int const, Descriptor>, false>*, unsigned long) /usr/include/c++/15/bits/allocator.h:215
+    #3 0x55555706cb76 in std::allocator_traits<std::allocator<std::__detail::_Hash_node<std::pair<unsigned int const, Descriptor>, false> > >::deallocate(std::allocator<std::__detail::_Hash_node<std::pair<unsigned int const, Descriptor>, false> >&, std::__detail::_Hash_node<std::pair<unsigned int const, Descriptor>, false>*, unsigned long) /usr/include/c++/15/bits/alloc_traits.h:649
+    #4 0x55555706cb76 in std::__detail::_Hashtable_alloc<std::allocator<std::__detail::_Hash_node<std::pair<unsigned int const, Descriptor>, false> > >::_M_deallocate_node_ptr(std::__detail::_Hash_node<std::pair<unsigned int const, Descriptor>, false>*) /usr/include/c++/15/bits/hashtable_policy.h:1583
+    #5 0x555557066380 in std::__detail::_Hashtable_alloc<std::allocator<std::__detail::_Hash_node<std::pair<unsigned int const, Descriptor>, false> > >::_M_deallocate_node(std::__detail::_Hash_node<std::pair<unsigned int const, Descriptor>, false>*) /usr/include/c++/15/bits/hashtable_policy.h:1573
+    #6 0x5555577aa63c in std::_Hashtable<unsigned int, std::pair<unsigned int const, Descriptor>, std::allocator<std::pair<unsigned int const, Descriptor> >, std::__detail::_Select1st, std::equal_to<unsigned int>, std::hash<unsigned int>, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits<false, false, true> >::_M_erase(unsigned long, std::__detail::_Hash_node_base*, std::__detail::_Hash_node<std::pair<unsigned int const, Descriptor>, false>*) /usr/include/c++/15/bits/hashtable.h:2590
+    #7 0x5555577a87d9 in std::_Hashtable<unsigned int, std::pair<unsigned int const, Descriptor>, std::allocator<std::pair<unsigned int const, Descriptor> >, std::__detail::_Select1st, std::equal_to<unsigned int>, std::hash<unsigned int>, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits<false, false, true> >::erase(std::__detail::_Node_const_iterator<std::pair<unsigned int const, Descriptor>, false, false>) /usr/include/c++/15/bits/hashtable.h:2565
+    #8 0x5555577a8062 in std::_Hashtable<unsigned int, std::pair<unsigned int const, Descriptor>, std::allocator<std::pair<unsigned int const, Descriptor> >, std::__detail::_Select1st, std::equal_to<unsigned int>, std::hash<unsigned int>, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits<false, false, true> >::erase(std::__detail::_Node_iterator<std::pair<unsigned int const, Descriptor>, false, false>) /usr/include/c++/15/bits/hashtable.h:1158
+    #9 0x5555577a7b3b in std::unordered_map<unsigned int, Descriptor, std::hash<unsigned int>, std::equal_to<unsigned int>, std::allocator<std::pair<unsigned int const, Descriptor> > >::erase(std::__detail::_Node_iterator<std::pair<unsigned int const, Descriptor>, false, false>) /usr/include/c++/15/bits/unordered_map.h:817
+    #10 0x5555577a7120 in DescriptorList::reap_closed() /home/builder/xania/src/DescriptorList.cpp:8
+    #11 0x555557021881 in MudImpl::game_loop() /home/builder/xania/src/MudImpl.cpp:327
+    #12 0x555556fd2630 in main /home/builder/xania/src/main.cpp:23
+    #13 0x7ffff682a600 in __libc_start_call_main ../sysdeps/nptl/libc_start_call_main.h:59
+    #14 0x7ffff682a717 in __libc_start_main_impl ../csu/libc-start.c:360
+    #15 0x555556fd1984 in _start (/home/builder/xania/install/bin/xania+0x1a7d984) (BuildId: dc389066e01e5035d647bf865b807777d961d23d)
+
+previously allocated by thread T0 here:
+    #0 0x7ffff792c73f in operator new(unsigned long) ../../../../src/libsanitizer/asan/asan_new_delete.cpp:109
+    #1 0x5555577aef8f in std::__new_allocator<std::__detail::_Hash_node<std::pair<unsigned int const, Descriptor>, false> >::allocate(unsigned long, void const*) /usr/include/c++/15/bits/new_allocator.h:151
+    #2 0x5555577aadd3 in std::allocator<std::__detail::_Hash_node<std::pair<unsigned int const, Descriptor>, false> >::allocate(unsigned long) /usr/include/c++/15/bits/allocator.h:203
+    #3 0x5555577aadd3 in std::allocator_traits<std::allocator<std::__detail::_Hash_node<std::pair<unsigned int const, Descriptor>, false> > >::allocate(std::allocator<std::__detail::_Hash_node<std::pair<unsigned int const, Descriptor>, false> >&, unsigned long) /usr/include/c++/15/bits/alloc_traits.h:614
+    #4 0x5555577aadd3 in std::__detail::_Hash_node<std::pair<unsigned int const, Descriptor>, false>* std::__detail::_Hashtable_alloc<std::allocator<std::__detail::_Hash_node<std::pair<unsigned int const, Descriptor>, false> > >::_M_allocate_node<std::piecewise_construct_t const&, std::tuple<unsigned int&>, std::tuple<unsigned int&, Mud&> >(std::piecewise_construct_t const&, std::tuple<unsigned int&>&&, std::tuple<unsigned int&, Mud&>&&) /usr/include/c++/15/bits/hashtable_policy.h:1551
+    #5 0x5555577a8c7e in std::pair<std::__detail::_Node_iterator<std::pair<unsigned int const, Descriptor>, false, false>, bool> std::_Hashtable<unsigned int, std::pair<unsigned int const, Descriptor>, std::allocator<std::pair<unsigned int const, Descriptor> >, std::__detail::_Select1st, std::equal_to<unsigned int>, std::hash<unsigned int>, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits<false, false, true> >::_M_emplace_uniq<std::piecewise_construct_t const&, std::tuple<unsigned int&>, std::tuple<unsigned int&, Mud&> >(std::piecewise_construct_t const&, std::tuple<unsigned int&>&&, std::tuple<unsigned int&, Mud&>&&) /usr/include/c++/15/bits/hashtable.h:2346
+    #6 0x5555577a832a in std::pair<std::__detail::_Node_iterator<std::pair<unsigned int const, Descriptor>, false, false>, bool> std::_Hashtable<unsigned int, std::pair<unsigned int const, Descriptor>, std::allocator<std::pair<unsigned int const, Descriptor> >, std::__detail::_Select1st, std::equal_to<unsigned int>, std::hash<unsigned int>, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits<false, false, true> >::emplace<std::piecewise_construct_t const&, std::tuple<unsigned int&>, std::tuple<unsigned int&, Mud&> >(std::piecewise_construct_t const&, std::tuple<unsigned int&>&&, std::tuple<unsigned int&, Mud&>&&) /usr/include/c++/15/bits/hashtable.h:1029
+    #7 0x5555577a7e86 in std::pair<std::__detail::_Node_iterator<std::pair<unsigned int const, Descriptor>, false, false>, bool> std::unordered_map<unsigned int, Descriptor, std::hash<unsigned int>, std::equal_to<unsigned int>, std::allocator<std::pair<unsigned int const, Descriptor> > >::emplace<std::piecewise_construct_t const&, std::tuple<unsigned int&>, std::tuple<unsigned int&, Mud&> >(std::piecewise_construct_t const&, std::tuple<unsigned int&>&&, std::tuple<unsigned int&, Mud&>&&) /usr/include/c++/15/bits/unordered_map.h:442
+    #8 0x5555577a748d in DescriptorList::create(unsigned int, Mud&) /home/builder/xania/src/DescriptorList.cpp:18
+    #9 0x55555702800a in MudImpl::handle_doorman_packet(tagPacket const&, std::basic_string_view<char, std::char_traits<char> >) /home/builder/xania/src/MudImpl.cpp:487
+    #10 0x555557020798 in MudImpl::game_loop() /home/builder/xania/src/MudImpl.cpp:291
+    #11 0x555556fd2630 in main /home/builder/xania/src/main.cpp:23
+    #12 0x7ffff682a600 in __libc_start_call_main ../sysdeps/nptl/libc_start_call_main.h:59
+    #13 0x7ffff682a717 in __libc_start_main_impl ../csu/libc-start.c:360
+    #14 0x555556fd1984 in _start (/home/builder/xania/install/bin/xania+0x1a7d984) (BuildId: dc389066e01e5035d647bf865b807777d961d23d)
+
+SUMMARY: AddressSanitizer: heap-use-after-free /home/builder/xania/src/Descriptor.hpp:163 in Descriptor::is_switched() const

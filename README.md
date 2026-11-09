@@ -15,18 +15,17 @@ map, names and predictions. Explorer never imports xania-sim.
 
 ## Setup
 
-1. Xania built in WSL (Windows) or Linux: a checkout at `~/xania` with `make` run in it. See Xania's README.
+1. Xania built from source: a checkout (by default `~/xania`) with `make` run in it. See Xania's README.
 2. Install this package and Explorer from the sibling checkout:
 
 ```
 python -m venv .venv
-.venv\Scripts\activate            # Windows   (source .venv/bin/activate elsewhere)
+source .venv/bin/activate         # or .venv\Scripts\activate on Windows
 python -m pip install -e ".[dev]" -e ../xania-explorer    # with Explorer checked out next to this repo
 python -m pip install -e ".[dev,explorer]"                # or: Explorer straight from GitHub
 ```
 
-Settings (environment variables): `XANIA_SIM_DISTRO` (the WSL distro, default `Ubuntu-26.04`) and `XANIA_SIM_XANIA`
-(the checkout as a Linux path, default `$HOME/xania`).
+Settings (environment variables): `XANIA_SIM_XANIA`, the Xania checkout (default `$HOME/xania`).
 
 ## Try it
 
@@ -42,7 +41,7 @@ Every bot writes a full transcript (`<` received, `>` sent) to `runs/<timestamp>
 
 ## Finding bugs
 
-The test MUD runs xania under gdb when gdb is installed in WSL (`sudo apt install gdb`), so if xania crashes, the
+The test MUD runs xania under gdb when gdb is installed where Xania runs, so if xania crashes, the
 report shows the signal, the last lines xania logged, and a backtrace with source files and line numbers. gdb only
 watches: no breakpoints, signals pass straight through. `XANIA_SIM_GDB=0` turns it off.
 
@@ -154,7 +153,10 @@ between sessions.
 
 Levelling is survival first: a bot only starts fights predicted (by Explorer, then by the shared fight log once bots
 have seen enough) to cost well under half its HP, skips rooms where others could join in, flees early (standing up
-first if it's been tripped or bashed), rests at the temple, and never goes back to a room it fled from.
+first if it's been tripped or bashed), rests at the temple, and never goes back to a room it fled from or died in.
+If something attacks it while it rests it stops and escapes (praying to recall if it has no moves left to run),
+and one death to a mob takes that mob off the list for its level band. At the start and after every level it
+walks to the nearest guildmaster and spends its practice sessions on its class's priorities (`trainer.py`).
 
 ## A roster, all weekend
 
@@ -168,8 +170,7 @@ The runner keeps every bot in the roster playing on your MUD: logins staggered, 
 under its daily cap of hours, in sessions that end with the journal posted as a note. A companion whose master is
 offline (or hasn't said anything for a few minutes) goes hunting on its own and drops everything when you tell it
 something. A failed session (the MUD restarting, a dropped connection) is retried with a growing backoff; a bot
-you've told `bye` takes an hour off. Ctrl+C makes every bot quit cleanly. On Windows it also holds a `wsl.exe`
-session open, so WSL doesn't stop the MUD while the bots play.
+you've told `bye` takes an hour off. Ctrl+C makes every bot quit cleanly.
 
 ## Legends
 
@@ -213,12 +214,13 @@ plain SQLite in `state/lore.db`, for other tools to read.
 | `parsers.py` | Pure parsing (the bot prompt, lines); tested against captured output |
 | `server.py` | `TestMud`: its own doorman + xania on its own port with a throwaway data dir (`/tmp/xania-sim/<port>`) |
 | `names.py` | Names the MUD accepts (`validate_player_name`) |
-| `world.py` | Explorer's world, loaded from the checkout the test MUD runs (in WSL, via `\\wsl.localhost\...`) |
+| `world.py` | Explorer's world, loaded from the checkout the test MUD runs |
 | `rooms.py` | Parsing room views (`room_look`, act_info.cpp) and recognising rooms by fingerprint |
 | `repo.py` | `GameRepo`: the game's git repo (`XANIA_SIM_XANIA`): commit, dirty state, is the build older than the source |
 | `scan.py` | Skills/spells from the repo's source (levels via Explorer; entry text, target, position read here) + fingerprints |
 | `store.py` | `Lore`: shared SQLite (`state/lore.db`): abilities and their changes, raw observations, claims, status per band |
 | `fight.py` | Recognising mobs in a room, `safe_targets`, `fight()` round by round, `recover()`, the shared `FightLog`, `compare` |
+| `trainer.py` | Practice: reads the practice table, picks skills by class priority, finds a practice mob |
 | `level.py` | `Leveller`: go where the safe fights are, fight one at a time, rest, flee and never go back |
 | `companion.py` | `Companion`: orders by tell, follow/group/autoassist, healing the group, status reports, hunting |
 | `persona.py` | Personas from TOML: traits, voice lines, catchphrases; the flee and heal thresholds they imply |
@@ -226,13 +228,10 @@ plain SQLite in `state/lore.db`, for other tools to read.
 | `dialogue.py` | Intents from what's said, voiced lines without repeats, event reactions, levelling advice; an off-by-default LLM hook |
 | `chronicle.py` | Highlights, journals, epithets, the fallen, cursed places, the digest, posting notes |
 | `legends.py` | Gathers the legends from the lore database for the `chronicle` command and the dispatch |
-| `companions.py` | The roster runner: windows, daily caps, staggered logins, backoff, clean shutdown, WSL keep-alive |
+| `companions.py` | The roster runner: windows, daily caps, staggered logins, backoff, clean shutdown |
 | `play.py` | The `companion` and `level` commands: one bot playing for a while, recorded in the event log |
 | `events.py` | `parse(text)` into events, `Recorder` (watches a bot, stores events + snapshots), `Progress` (reads them) |
 | `nav.py` | `Navigator`: where am I, safe routes (`danger_rooms` from aggressive spawns + `predict_fight`), walking, exploring |
-
-On Windows the MUD runs in WSL. WSL stops a distro once no `wsl.exe` session is attached, so `TestMud` keeps
-its start script in the foreground for as long as the server should live.
 
 ## Roadmap
 
@@ -247,5 +246,11 @@ their own legend (journals, nemeses, epithets). No LLM needed; there's an option
 - **M5 (done)**: companionship: follow, group, assist, heal, party commands by `tell`.
 - **M6 (done)**: personas, memory and dialogue (intent templates in each persona's voice, event-driven remarks).
 - **M7 (done)**: legends: journals posted as in-game notes, nemeses, epithets, cursed places, a weekend digest.
-- **M8 (done, except the Pi)**: the companions runner (a roster all weekend on your MUD). Still to do: the
-  Raspberry Pi (build Xania on ARM64, USB SSD, telnet from the LAN), which needs the hardware.
+- **M8 (done)**: the companions runner (a roster all weekend on your MUD).
+
+## Platform notes
+
+Xania Sim only needs Python 3.12+ and a machine that can build and run Xania; bots talk to the MUD over telnet,
+so they can run anywhere that reaches it. If Xania runs under WSL on Windows, the sim finds it there:
+`XANIA_SIM_DISTRO` names the distro, and the test MUD and the companions runner keep a `wsl.exe` session attached
+while they run (WSL stops a distro that has none).

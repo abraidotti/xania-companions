@@ -87,10 +87,13 @@ class Town:
         if cmd == "recall":
             self.here = 3001
             return "You pray for transportation!\n\r" + self.view()
-        if cmd == "rest":
+        if cmd in ("rest", "sleep"):
             self.resting = True
             self.mud.moves = 100  # a tick passes instantly in the fake
-            return "You sit down and rest.\n\r"
+            return "You sit down and rest.\n\r" if cmd == "rest" else "You go to sleep.\n\r"
+        if cmd == "wake":
+            self.resting = False
+            return "You wake and stand up.\n\r"
         if cmd == "stand":
             self.resting = False
             return "You stand up.\n\r"
@@ -156,7 +159,7 @@ async def test_rests_when_exhausted_and_avoids_danger(world):
         await nav.locate()
         assert nav.plan(3008) is None  # the only way passes the dangerous 3006
         r = await nav.walk_to(3005)
-        assert r.reached and "rest" in town.commands and "stand" in town.commands
+        assert r.reached and "sleep" in town.commands and "stand" in town.commands
         await bot.quit()
 
 
@@ -209,9 +212,12 @@ class Ambush(Town):
     """The bot sat down to get its moves back and something attacked: it can't run (no moves), so it prays."""
 
     def __call__(self, cmd: str):
-        if cmd == "rest":
+        if cmd == "sleep":
             self.commands.append(cmd)
             return "You are already fighting!\n\rThe small spider is in excellent condition.\n\r"
+        if cmd == "wake":
+            self.commands.append(cmd)
+            return "You are already awake.\n\r"
         if cmd == "flee":
             self.commands.append(cmd)
             return "You are too exhausted.\n\rPANIC! You couldn't escape!\n\r"
@@ -224,6 +230,6 @@ async def test_attacked_while_resting_it_escapes_even_without_moves(world):
         bot, nav = await _navigator(mud, world)
         nav.here = 3006
         await nav._rest_until()
-        assert [c for c in town.commands if c != "autoloot"] == ["rest", "stand", "flee", "recall"]
+        assert [c for c in town.commands if c != "autoloot"] == ["sleep", "wake", "stand", "flee", "recall"]
         assert nav.here == 3001 and 3006 in nav.avoid
         await bot.quit()
