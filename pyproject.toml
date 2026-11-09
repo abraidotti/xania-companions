@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xania-sim"
+version = "0.1.0"
+description = "Xania Sim: bots that play the Xania MUD over telnet: company, bug finding and feature tests"
+requires-python = ">=3.12"
+dependencies = []  # the core is stdlib only, plus xania-explorer (see the "explorer" extra and README)
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+# For a fresh setup or CI; with a sibling checkout, `pip install -e ../xania-explorer` instead.
+explorer = ["xania-explorer @ git+https://github.com/abraidotti/xania-explorer"]
+
+[tool.setuptools.packages.find]
+include = ["xania_sim*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "scenarios"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+markers = ["live: needs a built Xania (starts an isolated test MUD)", "slow: takes minutes (e.g. waits for regen ticks)"]
