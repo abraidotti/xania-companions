@@ -49,6 +49,11 @@ def main() -> None:
     h.add_argument("--minutes", type=float, default=10)
     h.add_argument("--port", type=int, default=9100)
     h.add_argument("--no-record", action="store_true", help="don't record the run in the lore database")
+    cu = sub.add_parser("churn", help="bots create characters and quit in a loop on a test MUD until xania crashes")
+    cu.add_argument("--bots", type=int, default=6)
+    cu.add_argument("--minutes", type=float, default=15)
+    cu.add_argument("--port", type=int, default=9100)
+    cu.add_argument("--no-record", action="store_true", help="don't record a crash in the lore database")
     sub.add_parser("report", help="print the latest runs and findings")
     co = sub.add_parser("companions", help="a roster of bots living on your MUD (see roster.example.toml)")
     co.add_argument("--roster", default="roster.toml")
@@ -87,6 +92,16 @@ def main() -> None:
             print("  bot error:", e)
     elif args.cmd in ("report", "findings", "dispatch", "publish"):
         journal_cmd(args)
+    elif args.cmd == "churn":
+        from .churn import churn
+
+        r = asyncio.run(churn(args.bots, args.minutes, args.port, record=not args.no_record))
+        print(f"{r.quits} quits in {r.seconds:.0f} s, {len(r.errors)} bot errors")
+        if r.crashed:
+            print(f"XANIA CRASHED. Report: {r.report_path}")
+            print(chr(10).join(r.report.splitlines()[:30]))
+        else:
+            print("no crash")
     elif args.cmd in ("companion", "level"):
         play.run(args)
     elif args.cmd == "status":

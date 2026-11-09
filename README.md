@@ -64,6 +64,10 @@ items with `get all` never applies. Filed as [abraidotti/xania#1](https://github
 bots turn autoloot off until it's fixed, and `scenarios/test_live_bugs.py` keeps checking it (it fails, telling you
 to retire it, once the crash is gone).
 
+`python -m xania_sim churn --bots 6 --minutes 15` has bots create characters and quit in a loop until xania
+crashes: it reproduces crashes that need a quit to coincide with something periodic (it found
+[abraidotti/xania#2](https://github.com/abraidotti/xania/issues/2), a use-after-free when a quit lands on a tick).
+
 ## Reading and sharing what runs found: the dispatch
 
 Hunts and live test sessions record themselves (runs and findings) in the lore database. A finding is one problem
