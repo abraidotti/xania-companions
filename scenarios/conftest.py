@@ -5,6 +5,7 @@ Every bot writes its transcript to runs/<timestamp>/<Name>.log. Skip live scenar
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 
@@ -12,6 +13,7 @@ import pytest
 import pytest_asyncio
 
 from xania_sim import world as W
+from xania_sim.findings import Finding, bug_line_findings, crash_finding, transcript_tails
 from xania_sim.names import bot_names, mob_words
 from xania_sim.server import TestMud
 from xania_sim.session import Bot, Profile
@@ -35,16 +37,50 @@ async def mud():
             pytest.skip(f"Xania isn't built for the test MUD: {e}")
         raise
     yield m
+    FOUND.extend(bug_line_findings(m.run(f"cat {m.data_dir}/log/xania*.log 2>/dev/null", check=False),
+                                   "python -m pytest scenarios"))
     await m.stop()
+    _record_session()
 
 
 CRASHES: list[str] = []
+FOUND: list[Finding] = []  # findings this session, recorded for the dispatch when the MUD stops
+OUTCOMES: dict[str, int] = {}
+
+
+def pytest_runtest_logreport(report):
+    if report.when == "call" or report.outcome != "passed":
+        OUTCOMES[report.outcome] = OUTCOMES.get(report.outcome, 0) + 1
+
+
+def _record_session() -> None:
+    """The session as a run in the lore database, with its findings (XANIA_SIM_RECORD=0 to skip)."""
+    if os.environ.get("XANIA_SIM_RECORD", "1") == "0":
+        return
+    from xania_sim.findings import Journal
+    from xania_sim.repo import GameRepo
+    from xania_sim.store import Lore
+
+    v = GameRepo().version()
+    lore = Lore()
+    journal = Journal(lore.db)
+    run_id = journal.start_run("tests", "Live scenarios", v.commit, v.dirty)
+    for f in FOUND:
+        journal.record(run_id, f, v.commit)
+    journal.finish_run(run_id, **OUTCOMES, findings=len(FOUND))
+    lore.close()
+
+
+@pytest.fixture
+def found():
+    """Tests append Findings here to put them in the dispatch."""
+    return FOUND
 
 
 @pytest_asyncio.fixture(autouse=True)
 async def crash_watch(request):
-    """After each live test: if xania died, fail that test with the end of its log, and restart it (keeping
-    players) so the remaining tests still run."""
+    """After each live test: if xania died, fail that test with the backtrace, record the crash as a finding, and
+    restart the MUD (keeping players) so the remaining tests still run."""
     yield
     if "mud" not in request.fixturenames:
         return
@@ -52,6 +88,8 @@ async def crash_watch(request):
     if not m.alive():
         report = m.crash_report()
         CRASHES.append(f"{request.node.nodeid}:\n{report}")
+        FOUND.append(crash_finding(report, f'python -m pytest "{request.node.nodeid}"',
+                                   f"During the live scenario {request.node.name}.", transcript_tails(RUNS)))
         await m.restart()
         pytest.fail(f"xania crashed during this test:\n{report}", pytrace=False)
 

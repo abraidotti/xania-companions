@@ -65,6 +65,27 @@ items with `get all` never applies. Filed as [abraidotti/xania#1](https://github
 bots turn autoloot off until it's fixed, and `scenarios/test_live_bugs.py` keeps checking it (it fails, telling you
 to retire it, once the crash is gone).
 
+## Reading and sharing what runs found: the dispatch
+
+Hunts and live test sessions record themselves (runs and findings) in the lore database. A finding is one problem
+however often it's seen: a crash is identified by its signal and the first function in Xania's own source, so the
+`get all` and autoloot triggers above are one finding with two kinds of occurrence. xania's own `[*****] BUG:` log
+lines become findings too. Each keeps every occurrence (when, which game commit, backtrace, the bots' last
+transcript lines), a way to reproduce it, a status and an optional issue link.
+
+```
+python -m xania_sim report                          # latest runs and findings in the terminal
+python -m xania_sim findings do_get --link https://github.com/abraidotti/xania/issues/1
+python -m xania_sim findings do_get --status known  # new | known | ignored (new ones lead the headlines)
+python -m xania_sim dispatch                        # build the website locally (build/dispatch/index.html)
+python -m xania_sim publish                         # push it to the dispatch branch and deploy to GitHub Pages
+```
+
+The published dispatch is at **https://abraidotti.github.io/xania-sim/**: headlines, a card per finding (each
+with its own page, a stable link to share), and the run log. `publish` commits the site to the `dispatch` branch
+(never to `main`) and runs the [Dispatch workflow](.github/workflows/dispatch.yml), which deploys it. Only test
+MUD runs are recorded, and home directories in backtraces are shortened to `~/`.
+
 ## Shared lore
 
 ```

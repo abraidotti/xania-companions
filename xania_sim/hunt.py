@@ -1,8 +1,9 @@
 """Crash hunting: bots repeat one risky activity on a test MUD (running under gdb) until xania crashes or time runs
 out, then save the crash report with the backtrace.
 
-The built-in activity is fighting a mob: each bot is a fresh level-1 character that walks to where the mob spawns,
-attacks it, and stays in the fight (dying, fleeing or winning, and autolooting) until it's over. That's how the
+The built-in activity is fighting a mob: each bot is a fresh level-1 character with the game's default settings
+(unlike other bots, hunters keep autoloot on), that walks to where the mob spawns, attacks it, and stays in the fight
+(dying, fleeing or winning, and autolooting) until it's over. That's how the
 ``get all corpse`` crash (act_obj.cpp, ``arg1[3]`` past the end of "all") was reproduced.
 """
 
@@ -15,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import world as W
+from .findings import bug_line_findings, crash_finding, transcript_tails
 from .names import bot_names, mob_words
 from .nav import Navigator
 from .rooms import Fingerprints
@@ -49,7 +51,8 @@ def spawn_rooms(world, keywords: str) -> tuple[list[int], str]:
 
 async def _fighter(mud, w, fp, names, rooms, target, stop, res: HuntResult, runs):
     while not stop.is_set():
-        bot = Bot(next(names), "simpass1", host=mud.host, port=mud.port, transcript_dir=runs)
+        # autoloot=None: keep the game's defaults (autoloot on), like a new player; hunts look for crashes
+        bot = Bot(next(names), "simpass1", host=mud.host, port=mud.port, transcript_dir=runs, autoloot=None)
         try:
             await bot.enter(Profile(cls=random.choice(CLASSES)))
             nav = Navigator(bot, w, fp)
@@ -73,7 +76,9 @@ async def _fighter(mud, w, fp, names, rooms, target, stop, res: HuntResult, runs
                 stop.set()
 
 
-async def hunt(mob: str, bots: int = 4, minutes: float = 10, port: int = 9100) -> HuntResult:
+async def hunt(mob: str, bots: int = 4, minutes: float = 10, port: int = 9100, record: bool = True) -> HuntResult:
+    """Run the hunt; with ``record``, the run and its findings go into the lore database (for the dispatch)."""
+    findings: list = []
     w = W.load()
     fp = Fingerprints(w)
     rooms, target = spawn_rooms(w, mob)
@@ -94,10 +99,32 @@ async def hunt(mob: str, bots: int = 4, minutes: float = 10, port: int = 9100) -
         await asyncio.gather(watch(), *(_fighter(mud, w, fp, names, rooms, target, stop, res, runs)
                                         for _ in range(bots)))
         res.seconds = time.monotonic() - t0
+        repro = f'python -m xania_sim hunt --mob "{mob}" --bots {bots}'
         if mud.crashed():
             res.crashed = True
             res.report = mud.crash_report()
             runs.mkdir(parents=True, exist_ok=True)
             res.report_path = runs / "xania-crash.txt"
             res.report_path.write_text(res.report, encoding="utf-8")
+            findings.append(crash_finding(res.report, repro, f"Level-1 bots fighting {mob} (room {rooms}).",
+                                          transcript_tails(runs)))
+        findings.extend(bug_line_findings(mud.log("xania"), repro))
+    if record:
+        _record(f"Hunt: {mob}, {bots} bots", findings, fights=res.fights, seconds=round(res.seconds),
+                crashed=res.crashed)
     return res
+
+
+def _record(title: str, found: list, **summary) -> None:
+    from .findings import Journal
+    from .repo import GameRepo
+    from .store import Lore
+
+    v = GameRepo().version()
+    lore = Lore()
+    journal = Journal(lore.db)
+    run_id = journal.start_run("hunt", title, v.commit, v.dirty)
+    for f in found:
+        journal.record(run_id, f, v.commit)
+    journal.finish_run(run_id, **summary, findings=len(found))
+    lore.close()

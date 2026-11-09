@@ -48,6 +48,15 @@ def main() -> None:
     h.add_argument("--bots", type=int, default=4)
     h.add_argument("--minutes", type=float, default=10)
     h.add_argument("--port", type=int, default=9100)
+    h.add_argument("--no-record", action="store_true", help="don't record the run in the lore database")
+    sub.add_parser("report", help="print the latest runs and findings")
+    fi = sub.add_parser("findings", help="mark a finding known/ignored/new, or link it to an issue")
+    fi.add_argument("finding", help="its signature, or part of it (e.g. do_get)")
+    fi.add_argument("--status", choices=["new", "known", "ignored"])
+    fi.add_argument("--link", help="a URL, e.g. the GitHub issue")
+    d = sub.add_parser("dispatch", help="build the dispatch website locally")
+    d.add_argument("--out", default="build/dispatch")
+    sub.add_parser("publish", help="build the dispatch, push it to the dispatch branch and deploy it to GitHub Pages")
     args = ap.parse_args()
     if args.cmd == "smoke":
         asyncio.run(smoke(args.port, args.existing))
@@ -56,7 +65,7 @@ def main() -> None:
     elif args.cmd == "hunt":
         from .hunt import hunt
 
-        r = asyncio.run(hunt(args.mob, args.bots, args.minutes, args.port))
+        r = asyncio.run(hunt(args.mob, args.bots, args.minutes, args.port, record=not args.no_record))
         print(f"{r.fights} fights in {r.seconds:.0f} s, {r.errors} bot errors")
         if r.crashed:
             print(f"XANIA CRASHED. Report with backtrace: {r.report_path}\n")
@@ -65,6 +74,40 @@ def main() -> None:
             print("no crash")
         for e in r.last_errors:
             print("  bot error:", e)
+    elif args.cmd in ("report", "findings", "dispatch", "publish"):
+        journal_cmd(args)
+
+
+def journal_cmd(args) -> None:
+    from . import dispatch as D
+    from .findings import Journal
+    from .store import Lore
+
+    lore = Lore()
+    journal = Journal(lore.db)
+    try:
+        if args.cmd == "report":
+            for r in journal.runs(8):
+                print(f"{D._when(r['started'])}  {r['kind']:<6} {r['title']:<36} {D._summary_text(r['summary'])}")
+            print()
+            for f in journal.findings():
+                print(f"[{f['status']:<7}] {f['severity']:<6} {f['title']}\n          seen {f['count']}x, last "
+                      f"{D._when(f['last_seen'])}{'  ' + f['link'] if f['link'] else ''}\n          {f['signature']}")
+        elif args.cmd == "findings":
+            sig = journal.find(args.finding)
+            if args.status:
+                journal.set_status(sig, args.status)
+            if args.link:
+                journal.set_link(sig, args.link)
+            print(f"{sig}: updated")
+        elif args.cmd == "dispatch":
+            out = D.build(journal, Path(args.out))
+            print(f"built {out / 'index.html'}")
+        elif args.cmd == "publish":
+            commit = D.publish(journal, Path(__file__).resolve().parents[1])
+            print(f"pushed the dispatch ({commit[:10]}) and started the Pages deployment")
+    finally:
+        lore.close()
 
 
 def lore_cmd(db: str | None, level: int, names: list[str]) -> None:

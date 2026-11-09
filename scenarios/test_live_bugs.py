@@ -3,6 +3,7 @@ retire it) once a fix makes the crash go away. Bot defaults that work around the
 
 import asyncio
 
+from xania_sim.findings import crash_finding
 from xania_sim.session import Bot, Profile
 
 
@@ -25,14 +26,17 @@ async def test_bots_turn_autoloot_off(new_bot):
     await bot.set_autoloot(False)
 
 
-async def test_get_all_in_an_empty_room_crashes_debug_builds(mud, names):
-    """act_obj.cpp do_get: 'get all' reads arg1[3] where arg1 is "all" (3 chars) when nothing is found (line 648)."""
+async def test_get_all_in_an_empty_room_crashes_debug_builds(mud, names, found):
+    """act_obj.cpp do_get: 'get all' reads arg1[3] where arg1 is "all" (3 chars) when nothing is found (line 648).
+    Each run that still sees it adds an occurrence to the finding (so the dispatch shows it's still there)."""
     bot = Bot(names(), "simpass1", host=mud.host, port=mud.port)
     await bot.enter(Profile())
     crashed = await _crashes_after(mud, bot, "get all")
     report = mud.crash_report() if crashed else ""
     await bot.close()
     if crashed:
+        found.append(crash_finding(report, 'python -m pytest scenarios/test_live_bugs.py -k get_all',
+                                   "A bot typed 'get all' in an empty room (a known-bug check)."))
         await mud.restart()
     assert crashed, "'get all' no longer crashes xania: the bug looks fixed, retire this test"
     assert "do_get" in report and "act_obj.cpp" in report
