@@ -18,6 +18,7 @@ from .events import Recorder
 from .fight import FightLog, MobIndex
 from .level import Leveller
 from .nav import Navigator
+from .persona import Persona, plain, roster
 from .rooms import Fingerprints
 from .server import TestMud
 from .session import Bot, Profile
@@ -38,18 +39,18 @@ def _setup(bot: Bot, w, cls: str, race: str, lore: Lore, run_id: str):
     return nav, rec, lev
 
 
-async def companion(name: str, master: str, cls: str, race: str, minutes: float, port: int, test_mud: bool,
-                    password: str) -> None:
+async def companion(persona: Persona, master: str, minutes: float, port: int, test_mud: bool, password: str) -> None:
+    name, cls, race = persona.name, persona.cls, persona.race
     w, lore = W.load(), Lore()
     runs = Path("runs") / f"companion-{time.strftime('%Y%m%d-%H%M%S')}"
 
     async def play(host, port):
         bot = Bot(name, password, host=host, port=port, transcript_dir=runs)  # autoloot off: it crashes debug builds (do_get)
-        await bot.enter(Profile(race=race, cls=cls))
+        await bot.enter(Profile(race=race, cls=cls, sex=persona.sex))
         nav, rec, lev = _setup(bot, w, cls, race, lore, "companion")
         rec.level = await lev.level()
         rec.snapshot()
-        comp = Companion(bot, w, cls, master, nav, rec.level, lev)
+        comp = Companion(bot, w, cls, master, nav, rec.level, lev, persona=persona, db=lore.db, log=lev.log)
         print(f"{bot.name} ({race} {cls}, level {rec.level}) is in. Tell it 'help' from {master.capitalize()}. "
               f"Transcript: {bot.transcript}")
         try:
@@ -95,24 +96,39 @@ def add_commands(sub) -> None:
     for cmd, help_ in (("companion", "a bot that follows you and takes orders by tell (tell it 'help')"),
                        ("level", "a bot that levels on its own, survival first")):
         p = sub.add_parser(cmd, help=help_)
-        p.add_argument("name", help="the bot's character name (created if new)")
+        p.add_argument("name", nargs="?", help="the bot's character name (created if new; default: the persona's)")
+        p.add_argument("--persona", help="a persona from personas/ (e.g. bram, hilda, wren): name, class, voice, traits")
         if cmd == "companion":
             p.add_argument("--master", required=True, help="your character's name: the one it takes orders from")
         else:
             p.add_argument("--goal", type=int, default=5, help="stop at this level")
-        p.add_argument("--cls", default="cleric" if cmd == "companion" else "knight",
-                       help="mage, cleric, knight or barbarian")
-        p.add_argument("--race", default="human")
+        p.add_argument("--cls", help="mage, cleric, knight or barbarian (default: the persona's, else "
+                       + ("cleric)" if cmd == "companion" else "knight)"))
+        p.add_argument("--race", help="default: the persona's, else human")
         p.add_argument("--minutes", type=float, default=60)
         p.add_argument("--port", type=int, default=9000)
         p.add_argument("--test-mud", action="store_true", help="start an isolated test MUD on --port instead")
         p.add_argument("--password", default="botpass1")
 
 
+def persona_for(args) -> Persona:
+    """The persona from --persona (or one named like the bot), with --cls/--race overriding it."""
+    people = roster()
+    key = (args.persona or args.name or "").lower()
+    if args.persona and key not in people:
+        raise SystemExit(f"no persona {args.persona!r}; there are: {', '.join(sorted(people))}")
+    if not key:
+        raise SystemExit("give the bot a name, or --persona")
+    p = people.get(key) or plain(args.name, "cleric" if args.cmd == "companion" else "knight")
+    if args.name:
+        p.name = args.name.capitalize()
+    p.cls, p.race = args.cls or p.cls, args.race or p.race
+    return p
+
+
 def run(args) -> None:
+    p = persona_for(args)
     if args.cmd == "companion":
-        asyncio.run(companion(args.name, args.master, args.cls, args.race, args.minutes, args.port, args.test_mud,
-                              args.password))
+        asyncio.run(companion(p, args.master, args.minutes, args.port, args.test_mud, args.password))
     else:
-        asyncio.run(level(args.name, args.cls, args.race, args.goal, args.minutes, args.port, args.test_mud,
-                          args.password))
+        asyncio.run(level(p.name, p.cls, p.race, args.goal, args.minutes, args.port, args.test_mud, args.password))

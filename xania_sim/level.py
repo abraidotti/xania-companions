@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 
 from xania_explorer import api
 
-from .fight import SAFE_SHARE, FightLog, FightResult, MobIndex, REST_BELOW, fight, recover, safe_targets
+from .fight import FLEE_AT, SAFE_SHARE, FightLog, FightResult, MobIndex, REST_BELOW, fight, recover, safe_targets
 from .nav import ROOM_REPLY, Navigator, danger_rooms
 from .session import Bot
 
@@ -108,6 +108,8 @@ class Leveller:
         await self.nav.recall()
         await recover(self.bot)
 
+    flee_at = FLEE_AT  # a persona can set its own (persona.flee_at)
+
     async def run(self, goal_level: int, budget: float = 1800, stop=None) -> LevelReport:
         """Level until ``goal_level``, ``budget`` seconds, or ``stop()`` turns true (checked between fights)."""
         t0 = time.monotonic()
@@ -150,7 +152,7 @@ class Leveller:
                 here = self.nav.here
                 if self.recorder is not None:
                     self.recorder.target = self.world.mobs[mob].short_descr
-                r = await fight(self.bot, mob, self.mobs.keyword(mob), escape=self.nav.escape)
+                r = await fight(self.bot, mob, self.mobs.keyword(mob), flee_at=self.flee_at, escape=self.nav.escape)
                 if r.outcome == "absent":
                     continue
                 fought = True

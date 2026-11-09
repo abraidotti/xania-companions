@@ -99,8 +99,8 @@ async def test_a_companion_follows_heals_and_reports(world):
         await until(lambda: any("Town Square" in t for t in party.told))
         assert comp.nav.here == 3002 and comp.grouped
         mud.push("Hassan tells you 'dance'\n\r")
-        await until(lambda: any("don't know 'dance'" in t for t in party.told))
+        await until(lambda: any("I don't follow" in t or "Orders I know" in t for t in party.told))
         mud.push("Hassan tells you 'bye'\n\r")
         await asyncio.wait_for(task, 10)
-        assert party.told[-1] == "Farewell!"
+        assert party.told[-1] in ("Farewell!", "Until next time, Hassan.", "Safe travels, Hassan.")
         await bot.quit()

@@ -15,6 +15,12 @@ Healers also watch the group while following: when someone is below ``HEAL_BELOW
 mana, it casts its best cure on them. When the master moves, "You follow X." and the room that follows keep the
 navigator's belief up to date.
 
+A companion has a persona (``persona.py``: traits and voice) and, given the lore database, a memory
+(``memory.py``). Anything said to it that isn't an order is answered in its voice (``dialogue.py``: greetings,
+thanks, "where should I level?", "who killed you?"...), and it remarks on what happens to it (levels, first kill,
+close calls, deaths, revenge) as often as its chattiness says. Bravery sets its flee threshold and loyalty how soon
+it heals.
+
 Everything a companion does goes through ``Bot.do``, so a ``Recorder`` on the same bot logs it like any other play.
 """
 
@@ -26,8 +32,11 @@ from dataclasses import dataclass
 
 from xania_explorer import api
 
+from .dialogue import Speaker, level_areas
 from .events import parse
 from .fight import recover
+from .memory import Keeper, Memory
+from .persona import Persona, plain
 from .nav import Navigator, NavError
 from .rooms import parse_view
 from .session import Bot
@@ -81,14 +90,32 @@ def command_of(text: str, bot_name: str = "") -> tuple[str, str]:
     return ALIASES.get(word, word), " ".join(words[1:])
 
 
+CLOSE_CALL = 0.2  # below this share of HP (and alive) is worth a remark
+REMARK_GAP = 45.0  # seconds between unprompted remarks
+
+
 class Companion:
     def __init__(self, bot: Bot, world, cls: str, master: str, nav: Navigator | None = None, level: int = 1,
-                 leveller=None, hunt_budget: float = 600):
+                 leveller=None, hunt_budget: float = 600, persona: Persona | None = None, db=None, log=None,
+                 speaker: Speaker | None = None):
         self.bot, self.world, self.cls, self.master = bot, world, cls, master.capitalize()
         self.nav = nav or Navigator(bot, world)
         self.level, self.leveller, self.hunt_budget = level, leveller, hunt_budget
+        self.persona = persona or plain(bot.name, cls)
+        self.speaker = speaker or Speaker(self.persona)
+        self.log = log  # fight.FightLog, for "where should I level?"
+        if leveller is not None:
+            leveller.flee_at = self.persona.flee_at
+        self.memory = Memory(db, bot.name) if db is not None else None
+        self.target: str | None = None
+        if self.memory is not None:
+            Keeper(self.memory, bot, area=self._area, target=lambda: self._target(), on_fact=self._fact)
         self.spells = {a.name: a.level for a in api.abilities(cls)}
         self.inbox: list[str] = []
+        self.remarks: list[tuple[str, dict]] = []  # (intent, slots) waiting to be said
+        self._last_remark = 0.0
+        self._close_call_armed = True
+        self._areas: dict[int, list[str]] = {}
         self.following = self.grouped = self.done = False
         self.mode = "idle"  # idle, follow, hunt
         self.doing = "waiting for orders"
@@ -104,15 +131,48 @@ class Companion:
                 self.grouped = True
             elif e.kind == "level":
                 self.level += 1
+                self.remarks.append(("level_up", {"level": self.level}))
         if (m := REMOVED.search(text)) is not None:
             if "group" in m.group(0):
                 self.grouped = False
             else:
                 self.following = False
+        if prompt is not None and prompt.max_hp:
+            if 0 < prompt.hp < CLOSE_CALL * prompt.max_hp and self._close_call_armed:
+                self._close_call_armed = False
+                self.remarks.append(("close_call", {}))
+            elif prompt.hp >= 0.6 * prompt.max_hp:
+                self._close_call_armed = True
         if (m := FOLLOWED.search(text)) is not None and m["who"].lower() == self.master.lower():
             view = parse_view(text[m.end():])
             if view is not None:
                 self.nav._arrive(self.nav.recognise(view, None))
+
+    def _area(self) -> str | None:
+        a = self.world.room_area.get(self.nav.here) if self.nav.here is not None else None
+        return a.name if a is not None else None
+
+    def _target(self) -> str | None:
+        rec = self.leveller.recorder if self.leveller is not None else None
+        return (rec.target if rec is not None else None) or self.target
+
+    def _fact(self, kind: str, fact: dict) -> None:
+        mob = fact.get("data", {}).get("victim") or fact["key"]
+        if kind in ("first_kill", "killed_by", "revenge"):
+            self.remarks.append((kind, {"mob": mob}))
+        elif kind == "grouped" and fact["count"] == 1:
+            self.remarks.append(("grouped", {}))
+
+    def slots(self) -> dict:
+        p = self.bot.prompt
+        return {"master": self.master, "level": self.level, "hp": p.hp if p else 0, "max_hp": p.max_hp if p else 0,
+                "mana": p.mana if p else 0, "where": self.where(), "area": self._area() or "?",
+                "commands": ", ".join(COMMANDS)}
+
+    async def say(self, intent: str, **extra) -> None:
+        line = self.speaker.line(intent, **self.slots() | extra)
+        if line:
+            await self.tell(line)
 
     def best(self, names) -> str | None:
         return next((n for n in names if self.spells.get(n, 999) <= self.level), None)
@@ -135,10 +195,12 @@ class Companion:
         loop = asyncio.get_running_loop()
         end = None if seconds is None else loop.time() + seconds
         await self._read_level()
-        await self.tell(f"Hello {self.master}! I'm a level {self.level} {self.cls}. Tell me 'help' to see what I can do.")
+        await self.say("hello")
         while not self.done and (end is None or loop.time() < end):
             if self.inbox:
                 await self.handle(self.inbox.pop(0))
+            elif self.remarks:
+                await self._remark(loop.time())
             elif self.mode == "hunt":
                 await self._hunt()
             else:
@@ -158,10 +220,29 @@ class Companion:
     async def handle(self, text: str) -> None:
         cmd, rest = command_of(text, self.bot.name)
         action = getattr(self, f"cmd_{cmd}", None) if cmd in COMMANDS else None
-        if action is None:
-            await self.tell(f"Sorry, I don't know '{text[:40]}'. I can: {', '.join(COMMANDS)}.")
+        if action is not None:
+            await action(rest)
             return
-        await action(rest)
+        slots = self.slots()
+        if self.memory is not None:
+            slots["nemesis_fact"] = self.memory.nemesis()
+        if self.level not in self._areas:
+            try:
+                self._areas[self.level] = level_areas(self.world, self.cls, self.level, self.log)
+            except Exception:  # pragma: no cover - a world without combat data
+                self._areas[self.level] = []
+        slots["areas"] = self._areas[self.level]
+        reply = self.speaker.answer(text, **slots)
+        await self.tell(reply or self.speaker.line("unknown", **slots))
+
+    async def _remark(self, now: float) -> None:
+        """Say one queued remark, if it's been a while and the persona feels like talking; drop the rest."""
+        intent, extra = self.remarks.pop(0)
+        important = intent in ("killed_by", "revenge", "level_up")
+        if now - self._last_remark >= REMARK_GAP or important:
+            if important or self.speaker.chatty():
+                self._last_remark = now
+                await self.say(intent, **extra)
 
     # -- commands --------------------------------------------------------------------------------
     async def cmd_help(self, rest: str) -> None:
@@ -173,8 +254,8 @@ class Companion:
         if re.search(r"You now follow|You already follow|But you'd rather", r.text):
             self.following, self.mode, self.doing = True, "follow", f"following {self.master}"
             await self._autoassist(True)
-            await self.tell("Right behind you." + ("" if self.grouped else f" Type 'group {self.bot.name}' and "
-                                                   "I'll fight beside you."))
+            line = self.speaker.line("follow_ok", **self.slots())
+            await self.tell(line + ("" if self.grouped else f" Type 'group {self.bot.name}' and I'll fight beside you."))
         elif "They aren't here" in r.text:
             await self.tell(f"I can't see you. I'm at {self.where()}.")
         else:
@@ -183,7 +264,7 @@ class Companion:
     async def cmd_stay(self, rest: str) -> None:
         await self.bot.do("follow self", expect=r"You stop following|You already follow yourself|Follow whom")
         self.following, self.mode, self.doing = False, "idle", f"waiting at {self.where()}"
-        await self.tell(f"I'll wait here, at {self.where()}.")
+        await self.say("stay_ok")
 
     async def cmd_status(self, rest: str) -> None:
         p = self.bot.prompt
@@ -238,7 +319,7 @@ class Companion:
         await self.tell(f"Cast {' and '.join(done)}." if done else "My spells didn't work.")
 
     async def cmd_bye(self, rest: str) -> None:
-        await self.tell("Farewell!")
+        await self.say("farewell")
         self.done = True
 
     # -- helpers ---------------------------------------------------------------------------------
@@ -258,7 +339,7 @@ class Companion:
             return
         self._last_group_check = now
         r = await self.bot.do("group", expect=r"group:|You have no group|isn't following")
-        low = sorted((m for m in parse_group(r.text) if m.share < HEAL_BELOW), key=lambda m: m.share)
+        low = sorted((m for m in parse_group(r.text) if m.share < self.persona.heal_below), key=lambda m: m.share)
         if low and self.bot.prompt.mana >= 15:
             target = "self" if low[0].name.lower() == self.bot.name.lower() else low[0].name
             await self._cast(self.best(HEALS), target)
@@ -272,5 +353,5 @@ class Companion:
         elif rep.reason.startswith("no safe targets"):
             self.mode, self.doing = "idle", "waiting for orders"
             await self.tell(f"Nothing safe left to fight at level {self.level}. Waiting for orders.")
-        elif rep.deaths:
+        elif rep.deaths and not any(i == "killed_by" for i, _ in self.remarks):
             await self.tell("I died out there. Back at the temple.")
