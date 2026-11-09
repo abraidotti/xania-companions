@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 from .parsers import Prompt
 
 SNAPSHOT_EVERY = 60.0
+CLOSE_CALL = 0.2  # HP share (alive) recorded as a close call, once until HP is back above REARM
+REARM = 0.6
 
 
 @dataclass(frozen=True)
@@ -85,6 +87,21 @@ RULES: list[tuple[str, re.Pattern, object]] = [
 ]
 
 
+# who's hitting the bot: "The small spider's slash splits your head." / "...'s trip misses your left shin." (the bot's
+# own hits start with "Your"; dam_message in fight.cpp); also "<short> is here, fighting YOU!" in a room view
+_ATTACK = re.compile(r"^(?!You)(?P<who>[^'\n]+?)'s [\w ]+? (?:you|your)\b.*$|^(?P<who2>.+?) is here, fighting YOU!$", re.M)
+
+
+def attacker(text: str) -> str | None:
+    """The last thing seen attacking the bot in ``text`` (lower-cased article), or None."""
+    who = None
+    for m in _ATTACK.finditer(text):
+        who = m["who"] or m["who2"]
+    if who is None:
+        return None
+    return re.sub(r"^(The|A|An) ", lambda m: m.group(1).lower() + " ", who.strip())
+
+
 def parse(text: str) -> list[Event]:
     out = []
     for raw in text.split("\n"):
@@ -125,8 +142,10 @@ class Recorder:
         self.room = room or (lambda: None)
         self.area_of = area_of or (lambda vnum: None)
         self.level = level
-        self.target: str | None = None
+        self.target: str | None = None  # what the bot chose to fight (set by the Leveller)
+        self.attacker: str | None = None  # what was last seen hitting it
         self._last_snap, self._last_prompt = 0.0, None
+        self._close_call_armed = True
         db.executescript(SCHEMA)
         now = clock()
         with db:
@@ -142,6 +161,9 @@ class Recorder:
 
     def feed(self, text: str, prompt: Prompt | None) -> list[Event]:
         events = parse(text)
+        hit_by = attacker(text)
+        if hit_by:
+            self.attacker = hit_by
         now, room = self.clock(), self.room()
         area = self.area_of(room) if room is not None else None
         rows = []
@@ -150,11 +172,20 @@ class Recorder:
             if e.kind == "level":
                 self.level += 1
                 data["level"] = self.level
-            elif e.kind == "died" and self.target:
-                data["killer"] = self.target
+            elif e.kind == "died" and (self.attacker or self.target):
+                data["killer"] = self.attacker or self.target  # who was hitting it, not what it last chose to fight
+                self.attacker = None
             elif e.kind == "kill" and self.target:
                 data["target"] = self.target
             rows.append((self.bot.name, now, e.kind, room, area, self.run_id, json.dumps(data)))
+        if prompt is not None and prompt.max_hp and not any(e.kind == "died" for e in events):
+            if 0 < prompt.hp < CLOSE_CALL * prompt.max_hp and self._close_call_armed:
+                self._close_call_armed = False
+                foe = self.attacker or self.target
+                data = {"hp": prompt.hp, "max_hp": prompt.max_hp} | ({"against": foe} if foe else {})
+                rows.append((self.bot.name, now, "close_call", room, area, self.run_id, json.dumps(data)))
+            elif prompt.hp >= REARM * prompt.max_hp:
+                self._close_call_armed = True
         force = any(e.kind in ("level", "died") for e in events)
         with self.db:
             if rows:
@@ -237,6 +268,15 @@ class Progress:
             q += f" AND kind IN ({','.join('?' * len(kinds))})"
             args += list(kinds)
         rows = self.db.execute(q + " ORDER BY at DESC, id DESC LIMIT ?", args + [limit]).fetchall()
+        return [{"bot": b, "at": at, "kind": k, "room": r, "area": a, "data": json.loads(d)} for b, at, k, r, a, d in rows]
+
+    def timeline(self, bot: str | None = None, since: float = 0, until: float = float("inf")) -> list[dict]:
+        """Every event in a period, oldest first (for the chronicle)."""
+        q = "SELECT bot, at, kind, room, area, data FROM events WHERE at >= ? AND at < ?"
+        args: list = [since, until if until != float("inf") else 1e18]
+        if bot:
+            q, args = q + " AND bot = ?", args + [bot]
+        rows = self.db.execute(q + " ORDER BY at, id", args).fetchall()
         return [{"bot": b, "at": at, "kind": k, "room": r, "area": a, "data": json.loads(d)} for b, at, k, r, a, d in rows]
 
     def by_area(self, bot: str | None = None) -> list[tuple[str, int, int, int]]:

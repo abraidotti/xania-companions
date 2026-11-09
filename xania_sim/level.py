@@ -106,7 +106,7 @@ class Leveller:
 
     async def rest(self) -> None:
         await self.nav.recall()
-        await recover(self.bot)
+        await recover(self.bot, on_attack=self.nav.escape)
 
     flee_at = FLEE_AT  # a persona can set its own (persona.flee_at)
 
@@ -168,6 +168,8 @@ class Leveller:
                         self.never.add(here)
                 elif r.outcome == "died":
                     rep.deaths += 1
+                    if here is not None:
+                        self.never.add(here)
                     self.nav.here = None
                     await self.nav.locate()
                 if r.levelled:

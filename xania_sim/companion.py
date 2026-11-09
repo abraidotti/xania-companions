@@ -97,7 +97,7 @@ REMARK_GAP = 45.0  # seconds between unprompted remarks
 class Companion:
     def __init__(self, bot: Bot, world, cls: str, master: str, nav: Navigator | None = None, level: int = 1,
                  leveller=None, hunt_budget: float = 600, persona: Persona | None = None, db=None, log=None,
-                 speaker: Speaker | None = None):
+                 speaker: Speaker | None = None, autonomous: bool = False, idle_hunt: float = 180):
         self.bot, self.world, self.cls, self.master = bot, world, cls, master.capitalize()
         self.nav = nav or Navigator(bot, world)
         self.level, self.leveller, self.hunt_budget = level, leveller, hunt_budget
@@ -116,6 +116,14 @@ class Companion:
         self._last_remark = 0.0
         self._close_call_armed = True
         self._areas: dict[int, list[str]] = {}
+        # autonomous: with no orders for ``idle_hunt`` seconds (or the master offline), go hunting on its own
+        self.autonomous, self.idle_hunt = autonomous, idle_hunt
+        self.master_online = True
+        self._last_order = 0.0
+        self.epithet: str | None = None
+        if self.memory is not None:
+            worn = self.memory.top("epithet", 1, by="worn_at")
+            self.epithet = worn[0]["data"].get("title") if worn else None
         self.following = self.grouped = self.done = False
         self.mode = "idle"  # idle, follow, hunt
         self.doing = "waiting for orders"
@@ -127,6 +135,7 @@ class Companion:
         for e in parse(text):
             if e.kind == "tell" and e.data["from"].lower() == self.master.lower():
                 self.inbox.append(e.data["text"])
+                self.master_online = True
             elif e.kind == "group" and e.data.get("leader", "").lower() == self.master.lower():
                 self.grouped = True
             elif e.kind == "level":
@@ -140,7 +149,7 @@ class Companion:
         if prompt is not None and prompt.max_hp:
             if 0 < prompt.hp < CLOSE_CALL * prompt.max_hp and self._close_call_armed:
                 self._close_call_armed = False
-                self.remarks.append(("close_call", {}))
+                self.remarks.append(("close_call", {"hp": prompt.hp, "max_hp": prompt.max_hp}))
             elif prompt.hp >= 0.6 * prompt.max_hp:
                 self._close_call_armed = True
         if (m := FOLLOWED.search(text)) is not None and m["who"].lower() == self.master.lower():
@@ -178,8 +187,13 @@ class Companion:
         return next((n for n in names if self.spells.get(n, 999) <= self.level), None)
 
     # -- talking ---------------------------------------------------------------------------------
-    async def tell(self, text: str) -> None:
-        await self.bot.do(f"tell {self.master} {text}", expect=TELL_REPLY)
+    async def tell(self, text: str) -> bool:
+        """Tell the master; False if they aren't online (or can't hear), which an autonomous companion takes as
+        leave to go hunting."""
+        r = await self.bot.do(f"tell {self.master} {text}", expect=TELL_REPLY)
+        delivered = r.has(r"^You tell ")
+        self.master_online = delivered
+        return delivered
 
     def where(self) -> str:
         here = self.nav.here
@@ -194,18 +208,27 @@ class Companion:
     async def run(self, seconds: float | None = None) -> None:
         loop = asyncio.get_running_loop()
         end = None if seconds is None else loop.time() + seconds
+        self._last_order = loop.time()
         await self._read_level()
         await self.say("hello")
         while not self.done and (end is None or loop.time() < end):
             if self.inbox:
+                self._last_order = loop.time()
                 await self.handle(self.inbox.pop(0))
             elif self.remarks:
                 await self._remark(loop.time())
+            elif self._should_wander(loop.time()):
+                self.mode, self.doing = "hunt", f"hunting while {self.master} is away"
             elif self.mode == "hunt":
                 await self._hunt()
             else:
                 await self._tend(loop.time())
                 await self.bot.listen(2)
+
+    def _should_wander(self, now: float) -> bool:
+        if not self.autonomous or self.leveller is None or self.mode != "idle" or self.following:
+            return False
+        return not self.master_online or now - self._last_order >= self.idle_hunt
 
     async def _read_level(self) -> None:
         r = await self.bot.do("score", expect=LEVEL)
@@ -243,6 +266,24 @@ class Companion:
             if important or self.speaker.chatty():
                 self._last_remark = now
                 await self.say(intent, **extra)
+        if intent in ("killed_by", "revenge", "level_up", "first_kill"):
+            await self.check_epithet()
+
+    async def check_epithet(self) -> None:
+        """Wear the best title the record has earned (``title``, act_info.cpp do_title), and say so."""
+        if self.memory is None:
+            return
+        from .chronicle import epithets
+        from .events import Progress
+
+        earned = epithets(Progress(self.memory.db).timeline(self.bot.name))
+        if not earned or earned[0].title == self.epithet:
+            return
+        best = earned[0]
+        await self.bot.do(f"title {best.title}", expect=r"^Ok\.|Change your title")
+        self.memory.note("epithet", best.title, title=best.title, reason=best.reason, worn_at=self.memory.clock())
+        self.epithet = best.title
+        await self.say("epithet", title=best.title, reason=best.reason)
 
     # -- commands --------------------------------------------------------------------------------
     async def cmd_help(self, rest: str) -> None:
@@ -286,7 +327,7 @@ class Companion:
     async def cmd_rest(self, rest: str) -> None:
         self.doing = "resting"
         await self.tell("Resting a while.")
-        await recover(self.bot, timeout=300)
+        await recover(self.bot, timeout=300, on_attack=self.nav.escape)
         p = self.bot.prompt
         self.doing = f"following {self.master}" if self.following else "waiting for orders"
         await self.tell(f"Rested: {p.hp}/{p.max_hp} hp.")
@@ -348,9 +389,8 @@ class Companion:
         rep = await self.leveller.run(goal_level=self.level + 1, budget=self.hunt_budget, stop=lambda: bool(self.inbox))
         if rep.level > self.level:
             self.level = rep.level
-        if rep.reason == "reached the goal":
-            await self.tell(f"Level {self.level}! Still hunting.")
-        elif rep.reason.startswith("no safe targets"):
+        await self.check_epithet()
+        if rep.reason.startswith("no safe targets"):  # (levels are announced by the level_up remark)
             self.mode, self.doing = "idle", "waiting for orders"
             await self.tell(f"Nothing safe left to fight at level {self.level}. Waiting for orders.")
         elif rep.deaths and not any(i == "killed_by" for i, _ in self.remarks):

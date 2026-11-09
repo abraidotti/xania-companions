@@ -156,6 +156,40 @@ Levelling is survival first: a bot only starts fights predicted (by Explorer, th
 have seen enough) to cost well under half its HP, skips rooms where others could join in, flees early (standing up
 first if it's been tripped or bashed), rests at the temple, and never goes back to a room it fled from.
 
+## A roster, all weekend
+
+```
+cp roster.example.toml roster.toml        # then set your character's name and pick the bots
+python -m xania_sim companions --roster roster.toml           # runs until Ctrl+C
+python -m xania_sim companions --roster roster.toml --hours 48
+```
+
+The runner keeps every bot in the roster playing on your MUD: logins staggered, each within its daily window and
+under its daily cap of hours, in sessions that end with the journal posted as a note. A companion whose master is
+offline (or hasn't said anything for a few minutes) goes hunting on its own and drops everything when you tell it
+something. A failed session (the MUD restarting, a dropped connection) is retried with a growing backoff; a bot
+you've told `bye` takes an hour off. Ctrl+C makes every bot quit cleanly. On Windows it also holds a `wsl.exe`
+session open, so WSL doesn't stop the MUD while the bots play.
+
+## Legends
+
+```
+python -m xania_sim chronicle             # the digest: every bot's journal for the last 3 days, framed by the Chronicler
+python -m xania_sim chronicle wren        # one bot: its epithets, nemeses and journal day by day
+python -m xania_sim chronicle --days 7
+```
+
+Bots keep journals. Each day's entry is written in the bot's own voice from its event log: the best moments
+(deaths, revenge, milestone levels, close calls, first kills, new companions, loot) in order, a tally of the rest
+("9 gutter rats, 3 ducklings and 2 others") and a closing line that depends on how the day went. The same day
+always reads the same. At the end of a companion session the journal is posted as an in-game note (to you by
+default; `--notes all` for everyone, `--notes none` to keep it quiet).
+
+They also earn **epithets** from their record (the Ratcatcher, Spiderbane, Twice-Dead, the Avenger, the Unbroken,
+the Wanderer...) and wear the best one as their in-game title; a mob that kills a bot becomes its **nemesis**
+until it's avenged. Areas where bots keep dying are **cursed places**. The dispatch has the whole chronicle (several
+narrators stitched together, a hall of the fallen, cursed places, epithets), and each bot's page has its journal.
+
 ## Progress: what each bot has done
 
 ```
@@ -190,6 +224,9 @@ plain SQLite in `state/lore.db`, for other tools to read.
 | `persona.py` | Personas from TOML: traits, voice lines, catchphrases; the flee and heal thresholds they imply |
 | `memory.py` | `Memory` (facts per bot: people, places, nemeses, firsts) and `Keeper`, which builds them from events |
 | `dialogue.py` | Intents from what's said, voiced lines without repeats, event reactions, levelling advice; an off-by-default LLM hook |
+| `chronicle.py` | Highlights, journals, epithets, the fallen, cursed places, the digest, posting notes |
+| `legends.py` | Gathers the legends from the lore database for the `chronicle` command and the dispatch |
+| `companions.py` | The roster runner: windows, daily caps, staggered logins, backoff, clean shutdown, WSL keep-alive |
 | `play.py` | The `companion` and `level` commands: one bot playing for a while, recorded in the event log |
 | `events.py` | `parse(text)` into events, `Recorder` (watches a bot, stores events + snapshots), `Progress` (reads them) |
 | `nav.py` | `Navigator`: where am I, safe routes (`danger_rooms` from aggressive spawns + `predict_fight`), walking, exploring |
@@ -209,5 +246,6 @@ their own legend (journals, nemeses, epithets). No LLM needed; there's an option
 - **M4 (done)**: event log (SQLite), `xania_sim status`, progress pages on the dispatch beside Explorer's predictions.
 - **M5 (done)**: companionship: follow, group, assist, heal, party commands by `tell`.
 - **M6 (done)**: personas, memory and dialogue (intent templates in each persona's voice, event-driven remarks).
-- **M7**: legends: journals posted as in-game notes, nemeses, epithets, cursed places, a weekend digest.
-- **M8**: the companions runner (a roster all weekend on your MUD), then the Raspberry Pi.
+- **M7 (done)**: legends: journals posted as in-game notes, nemeses, epithets, cursed places, a weekend digest.
+- **M8 (done, except the Pi)**: the companions runner (a roster all weekend on your MUD). Still to do: the
+  Raspberry Pi (build Xania on ARM64, USB SSD, telnet from the LAN), which needs the hardware.

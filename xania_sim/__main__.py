@@ -50,6 +50,12 @@ def main() -> None:
     h.add_argument("--port", type=int, default=9100)
     h.add_argument("--no-record", action="store_true", help="don't record the run in the lore database")
     sub.add_parser("report", help="print the latest runs and findings")
+    co = sub.add_parser("companions", help="a roster of bots living on your MUD (see roster.example.toml)")
+    co.add_argument("--roster", default="roster.toml")
+    co.add_argument("--hours", type=float, help="stop after this many hours (default: run until Ctrl+C)")
+    ch = sub.add_parser("chronicle", help="the legends: a digest of every bot's journal, the fallen, cursed places")
+    ch.add_argument("bot", nargs="?", help="just this bot: its journal day by day, epithets and nemeses")
+    ch.add_argument("--days", type=float, default=3, help="how far back (default 3 days)")
     st = sub.add_parser("status", help="each bot's progress: level, xp, kills, deaths, time played")
     st.add_argument("bot", nargs="?", help="show this bot's recent events and areas too")
     fi = sub.add_parser("findings", help="mark a finding known/ignored/new, or link it to an issue")
@@ -85,6 +91,12 @@ def main() -> None:
         play.run(args)
     elif args.cmd == "status":
         status_cmd(args.bot)
+    elif args.cmd == "companions":
+        from .companions import main as companions_main
+
+        companions_main(args.roster, args.hours)
+    elif args.cmd == "chronicle":
+        chronicle_cmd(args.bot, args.days)
 
 
 def _progress(lore):
@@ -98,6 +110,12 @@ def _progress(lore):
         print(f"(no fight comparisons: {e})")
         comparisons = []
     return Progress(lore.db), comparisons
+
+
+def _legends(lore):
+    from .legends import gather
+
+    return gather(lore.db)
 
 
 def journal_cmd(args) -> None:
@@ -123,12 +141,24 @@ def journal_cmd(args) -> None:
                 journal.set_link(sig, args.link)
             print(f"{sig}: updated")
         elif args.cmd == "dispatch":
-            out = D.build(journal, Path(args.out), *_progress(lore))
+            out = D.build(journal, Path(args.out), *_progress(lore), legends=_legends(lore))
             print(f"built {out / 'index.html'}")
         elif args.cmd == "publish":
             progress, comparisons = _progress(lore)
-            commit = D.publish(journal, Path(__file__).resolve().parents[1], progress=progress, comparisons=comparisons)
+            commit = D.publish(journal, Path(__file__).resolve().parents[1], progress=progress, comparisons=comparisons,
+                               legends=_legends(lore))
             print(f"pushed the dispatch ({commit[:10]}) and started the Pages deployment")
+    finally:
+        lore.close()
+
+
+def chronicle_cmd(bot: str | None, days: float) -> None:
+    from . import legends
+    from .store import Lore
+
+    lore = Lore()
+    try:
+        print(legends.text(lore.db, bot, days))
     finally:
         lore.close()
 

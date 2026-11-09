@@ -47,3 +47,11 @@ def test_fight_log_summarises_per_level_band(tmp_path):
     assert log.seen(7, 15) == (0, 0.0, 0.0)  # another band
     assert n >= MIN_FIGHTS and bad >= BAD_RATE  # this mob would now be off the list at levels 1-10
     lore.close()
+
+
+def test_one_death_is_counted_per_band(tmp_path):
+    lore = Lore(tmp_path / "lore.db")
+    log = FightLog(lore.db)
+    log.record("Wren", "mage", 2, FightResult(7, "died", 9, 20, -9, 20, 0, False, ""))
+    assert log.deaths(7, 1) == 1 and log.deaths(7, 15) == 0 and log.deaths(8, 2) == 0
+    lore.close()

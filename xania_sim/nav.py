@@ -42,7 +42,7 @@ MOVE_REPLY = re.compile("|".join([ROOM_REPLY, BLOCKED.pattern, EXHAUSTED.pattern
 OPEN_REPLY = r"^Ok\.|It's already open|It's locked|You can't do that|Open what|That's not a container"
 DOWN = re.compile(r"You're resting|You're sleeping|Try standing up|In your dreams|You're sitting")
 RECALL_REPLY = re.compile(ROOM_REPLY + r"|You are completely lost|You are there already|has forsaken you|"
-                          r"finish this fight first|" + DOWN.pattern, re.M)
+                          r"finish this fight first|You failed!|" + DOWN.pattern, re.M)
 POSITION_REPLY = r"^You (rest|sit down|stand up|stop resting|wake|are already|can't wake)|^You're "
 TIME_REPLY = r"o'clock"
 FLEE_REPLY = (r"You flee from combat|PANIC! You couldn't escape|You aren't fighting anyone|too lethargic to flee|"
@@ -142,13 +142,16 @@ class Navigator:
             await self.bot.do("wake", expect=POSITION_REPLY)
             await self.bot.do("stand", expect=POSITION_REPLY)
 
-    async def recall(self) -> None:
+    async def recall(self, _escaping: bool = False) -> None:
         r = await self.bot.do("recall", expect=RECALL_REPLY)
         if DOWN.search(r.text):
             await self.stand()
             r = await self.bot.do("recall", expect=RECALL_REPLY)
-        if FIGHTING.search(r.text) or "finish this fight" in r.text:
-            raise NavError(f"{self.bot.name} can't recall during a fight")
+        if "You failed!" in r.text or FIGHTING.search(r.text) or "finish this fight" in r.text:
+            if _escaping:
+                raise NavError(f"{self.bot.name} can't recall during a fight")
+            await self.escape()  # attacked: get out of the fight first (escape recalls once clear)
+            return
         if "You are there already" in r.text:
             self._arrive(RECALL)
             return
@@ -177,6 +180,17 @@ class Navigator:
             elif DOWN.search(r.text):
                 # tripped, bashed or asleep mid-fight: the fight goes on while the bot is down, so get up and retry
                 await self.stand()
+            elif EXHAUSTED.search(r.text):
+                # no moves to run with: pray instead (recall works mid-fight, by chance, and costs xp)
+                rr = await self.bot.do("recall", expect=RECALL_REPLY)
+                if "You have been KILLED" in rr.text:
+                    outcome = "died"
+                elif parse_view(rr.text) is not None or "You are there already" in rr.text:
+                    view = parse_view(rr.text)
+                    self._arrive(RECALL if view is None or self.fp.matches(RECALL, view) else self.recognise(view))
+                    if fled_from is not None:
+                        self.avoid.add(fled_from)
+                    return "fled"
             elif "too stunned" in r.text:
                 heard = await self.bot.listen(4)  # wait to recover (or to die)
                 if "You have been KILLED" in heard.text:
@@ -193,7 +207,7 @@ class Navigator:
             await self.locate()
         else:
             try:
-                await self.recall()
+                await self.recall(_escaping=True)
             except NavError:
                 await self.locate()
         return outcome
@@ -233,14 +247,22 @@ class Navigator:
 
     # -- moving -------------------------------------------------------------------------------------
     async def _rest_until(self, share: float = 0.9, timeout: float = 600) -> None:
-        """Rest until moves are back to ``share`` of max (regen happens on ticks, every 30 s)."""
-        await self.bot.do("rest", expect=POSITION_REPLY)
+        """Rest until moves are back to ``share`` of max (regen happens on ticks, every 30 s). If something attacks
+        meanwhile, stop resting and escape."""
+        from .fight import attacked
+
+        r = await self.bot.do("rest", expect=POSITION_REPLY + "|You are already fighting")
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
-        while self.bot.prompt.moves < share * self.bot.prompt.max_moves and loop.time() < deadline:
+        hit = attacked(r.text)
+        while not hit and self.bot.prompt.moves < share * self.bot.prompt.max_moves and loop.time() < deadline:
+            before = self.bot.prompt.hp
             await asyncio.sleep(5)
-            await self.bot.do("time", expect=TIME_REPLY)  # any harmless command, to read a fresh prompt
+            r = await self.bot.do("time", expect=TIME_REPLY)  # any harmless command, to read a fresh prompt
+            hit = attacked(r.text, before, self.bot.prompt.hp)
         await self.bot.do("stand", expect=POSITION_REPLY)
+        if hit:
+            await self.escape()
 
     async def step(self, s: api.Step) -> bool:
         """Take one step. Returns True on arriving where expected; otherwise updates ``here``/``blocked``."""

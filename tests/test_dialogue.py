@@ -19,7 +19,7 @@ def test_shipped_personas_load_and_every_line_formats():
             for _ in range(4):
                 line = sp.line(intent, master="Sandro", level=3, hp=10, max_hp=20, mob="the small spider",
                                where="Town Square", commands="follow", areas="Mud School", nemesis="a rat",
-                               times="twice", mood="fine")
+                               times="twice", mood="fine", title="the Ratcatcher", reason="12 rats")
                 assert line and "{" not in line, (p.name, intent, line)
 
 

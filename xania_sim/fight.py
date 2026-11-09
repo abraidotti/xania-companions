@@ -31,6 +31,14 @@ XP = re.compile(r"You receive (\d+) experience points")
 LEVEL_UP = "You raise a level"
 # bash and trip leave the victim resting (fight.cpp do_bash/do_trip) and it stays down until it stands
 KNOCKED = re.compile(r"sends you sprawling|trips you and you go down")
+# signs that a bot that meant to rest is in a fight (an aggressive mob, or one that followed it)
+ATTACKED = re.compile(r"You are already fighting|is here, fighting YOU|No way! +You are still fighting|"
+                      r"You are stunned|mortally wounded|You are incapacitated")
+
+
+def attacked(text: str, hp_before: int | None = None, hp_now: int | None = None) -> bool:
+    """True if ``text`` (or HP going down while resting) says the bot is being attacked."""
+    return bool(ATTACKED.search(text)) or (hp_before is not None and hp_now is not None and hp_now < hp_before)
 NOT_HERE = re.compile(r"They aren't here|You can't|Kill whom|Not on that target|You must MURDER")
 _TAGS = re.compile(r"^(?:\([^)]*\) )+")
 _POSED = re.compile(r"^(?P<short>.+?) is (?:standing|sitting|resting|sleeping|fighting|stunned|lying)\b")
@@ -111,6 +119,13 @@ class FightLog:
                             (r.mob, bot, cls, level, r.outcome, r.rounds, r.hp_before, r.hp_after, r.max_hp, r.xp,
                              self.clock()))
 
+    def deaths(self, mob: int, level: int) -> int:
+        """How many bots of ``level``'s band this mob has killed."""
+        band = band_of(level)
+        lo, hi = band * BAND_WIDTH + 1, (band + 1) * BAND_WIDTH
+        return self.db.execute("SELECT COUNT(*) FROM fights WHERE mob = ? AND level BETWEEN ? AND ? AND "
+                               "outcome = 'died'", (mob, lo, hi)).fetchone()[0]
+
     def seen(self, mob: int, level: int) -> tuple[int, float, float]:
         """(fights, share that ended in death or flight, mean share of max HP lost) in ``level``'s band."""
         band = band_of(level)
@@ -142,6 +157,8 @@ def safe_targets(world, cls: str, level: int, log: FightLog | None = None) -> di
             n, bad, lost = log.seen(m.mob.vnum, level)
             if n >= MIN_FIGHTS:
                 safe = bad < BAD_RATE and lost < SAFE_SHARE
+            if log.deaths(m.mob.vnum, level):
+                safe = False  # survival first: one death in this band is enough
         if safe:
             out[m.mob.vnum] = f.xp / max(1.0, f.rounds)
     return out
@@ -193,26 +210,35 @@ async def fight(bot: Bot, mob: int, keyword: str, flee_at: float = FLEE_AT, esca
 REST_REPLY = r"^You (rest|sit down|stand up|stop resting|wake|are already|go to sleep|can't)|^You're |Nah"
 
 
-async def recover(bot: Bot, hp: float = 0.95, mana: float = 0.8, timeout: float = 900) -> None:
-    """Sleep until HP and mana are back (regen comes on ticks, about every 30-60 s), then stand."""
+async def recover(bot: Bot, hp: float = 0.95, mana: float = 0.8, timeout: float = 900, on_attack=None) -> bool:
+    """Sleep until HP and mana are back (regen comes on ticks, about every 30-60 s), then stand. If the bot is
+    attacked meanwhile it stops at once, stands and awaits ``on_attack()`` (e.g. Navigator.escape); returns False
+    then, True if it rested in peace."""
     p = bot.prompt
 
     def done():
         return p.hp >= hp * p.max_hp and (p.max_mana == 0 or p.mana >= mana * p.max_mana)
 
     if done():
-        return
-    await bot.do("sleep", expect=REST_REPLY)
+        return True
+    r = await bot.do("sleep", expect=REST_REPLY + "|You are already fighting")
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
-    while loop.time() < deadline:
+    peaceful = not attacked(r.text)
+    while peaceful and loop.time() < deadline:
+        before = p.hp
         await asyncio.sleep(8)
         r = await bot.do("time", expect="o'clock")
         p = r.prompt
-        if done():
+        if attacked(r.text, before, p.hp):
+            peaceful = False
+        elif done():
             break
     await bot.do("wake", expect=REST_REPLY)
     await bot.do("stand", expect=REST_REPLY)
+    if not peaceful and on_attack is not None:
+        await on_attack()
+    return peaceful
 
 
 @dataclass(frozen=True)

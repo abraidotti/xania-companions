@@ -39,7 +39,20 @@ def _setup(bot: Bot, w, cls: str, race: str, lore: Lore, run_id: str):
     return nav, rec, lev
 
 
-async def companion(persona: Persona, master: str, minutes: float, port: int, test_mud: bool, password: str) -> None:
+async def post_journal(bot: Bot, persona: Persona, lore: Lore, since: float, to: str) -> list[str]:
+    """The session's journal entry, posted as a note to ``to`` (a name, "all", or "" for none). Returns it."""
+    from .chronicle import journal, post_note
+    from .events import Progress
+
+    pr = Progress(lore.db)
+    entry = journal(persona, pr.timeline(bot.name, since=since), pr.timeline(bot.name, until=since))
+    if entry and to and bot.conn and not bot.conn.closed:
+        await post_note(bot, to, f"{bot.name}'s journal, {time.strftime('%d %b')}", entry)
+    return entry
+
+
+async def companion(persona: Persona, master: str, minutes: float, port: int, test_mud: bool, password: str,
+                    notes: str = "master") -> None:
     name, cls, race = persona.name, persona.cls, persona.race
     w, lore = W.load(), Lore()
     runs = Path("runs") / f"companion-{time.strftime('%Y%m%d-%H%M%S')}"
@@ -53,8 +66,14 @@ async def companion(persona: Persona, master: str, minutes: float, port: int, te
         comp = Companion(bot, w, cls, master, nav, rec.level, lev, persona=persona, db=lore.db, log=lev.log)
         print(f"{bot.name} ({race} {cls}, level {rec.level}) is in. Tell it 'help' from {master.capitalize()}. "
               f"Transcript: {bot.transcript}")
+        start = time.time()
         try:
             await comp.run(seconds=minutes * 60)
+            to = {"master": master, "none": ""}.get(notes, notes)
+            entry = await post_journal(bot, persona, lore, start, to)
+            if entry:
+                print(f"\n{bot.name}'s journal" + (f" (posted as a note to {to})" if to else "") + ":\n  "
+                      + "\n  ".join(entry))
         finally:
             rec.snapshot()
             with contextlib.suppress(Exception):
@@ -100,6 +119,8 @@ def add_commands(sub) -> None:
         p.add_argument("--persona", help="a persona from personas/ (e.g. bram, hilda, wren): name, class, voice, traits")
         if cmd == "companion":
             p.add_argument("--master", required=True, help="your character's name: the one it takes orders from")
+            p.add_argument("--notes", default="master",
+                           help="post its journal as an in-game note at the end: master (default), all, none, or a name")
         else:
             p.add_argument("--goal", type=int, default=5, help="stop at this level")
         p.add_argument("--cls", help="mage, cleric, knight or barbarian (default: the persona's, else "
@@ -129,6 +150,6 @@ def persona_for(args) -> Persona:
 def run(args) -> None:
     p = persona_for(args)
     if args.cmd == "companion":
-        asyncio.run(companion(p, args.master, args.minutes, args.port, args.test_mud, args.password))
+        asyncio.run(companion(p, args.master, args.minutes, args.port, args.test_mud, args.password, args.notes))
     else:
         asyncio.run(level(p.name, p.cls, p.race, args.goal, args.minutes, args.port, args.test_mud, args.password))

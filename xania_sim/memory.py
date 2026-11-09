@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import time
 
-from .events import parse
+from .events import attacker, parse
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS memories (
@@ -88,6 +88,7 @@ class Keeper:
         self.area = area or (lambda: None)
         self.target = target or (lambda: None)
         self.on_fact = on_fact  # called with (kind, fact) for notable changes: lets a companion react
+        self.last_attacker: str | None = None
         bot.observers.append(self.feed)
 
     def _tell(self, kind: str, fact) -> None:
@@ -96,6 +97,8 @@ class Keeper:
 
     def feed(self, text: str, prompt) -> None:
         m, area = self.memory, self.area()
+        if (hit_by := attacker(text)) is not None:
+            self.last_attacker = hit_by
         for e in parse(text):
             d = e.data
             if e.kind == "kill":
@@ -108,7 +111,8 @@ class Keeper:
                 if foe is not None and not foe["data"].get("revenge"):
                     self._tell("revenge", m.note("nemesis", victim, count=0, revenge=True, avenged_at=m.clock()))
             elif e.kind == "died":
-                killer = d.get("killer") or self.target() or "something unseen"
+                killer = d.get("killer") or self.last_attacker or self.target() or "something unseen"
+                self.last_attacker = None
                 if area:
                     m.note("place", area, deaths=1)
                 self._tell("killed_by", m.note("nemesis", killer, kills_me=1, revenge=False, area=area or ""))

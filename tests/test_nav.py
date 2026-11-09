@@ -203,3 +203,27 @@ async def test_tripped_bot_stands_up_to_flee(world):
         assert [c for c in town.commands if c != "autoloot"] == ["flee", "stand", "flee", "recall"]
         assert nav.here == 3001 and 3006 in nav.avoid
         await bot.quit()
+
+
+class Ambush(Town):
+    """The bot sat down to get its moves back and something attacked: it can't run (no moves), so it prays."""
+
+    def __call__(self, cmd: str):
+        if cmd == "rest":
+            self.commands.append(cmd)
+            return "You are already fighting!\n\rThe small spider is in excellent condition.\n\r"
+        if cmd == "flee":
+            self.commands.append(cmd)
+            return "You are too exhausted.\n\rPANIC! You couldn't escape!\n\r"
+        return super().__call__(cmd)
+
+
+async def test_attacked_while_resting_it_escapes_even_without_moves(world):
+    async with FakeMud() as mud:
+        town = mud.play = Ambush(mud, world, start=3006)
+        bot, nav = await _navigator(mud, world)
+        nav.here = 3006
+        await nav._rest_until()
+        assert [c for c in town.commands if c != "autoloot"] == ["rest", "stand", "flee", "recall"]
+        assert nav.here == 3001 and 3006 in nav.avoid
+        await bot.quit()

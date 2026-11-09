@@ -61,6 +61,7 @@ LINES: dict[str, list[str]] = {
     "killed_by": ["{mob_cap} killed me. I'll be back for it.", "I died to {mob}. That's a grudge now."],
     "revenge": ["{mob_cap} is dead. That's for last time.", "Revenge on {mob}, at last."],
     "grouped": ["Together, then.", "Good to be in a party again."],
+    "epithet": ["They're calling me {me} {title} now. ({reason})", "{me} {title}. I've earned that one: {reason}."],
 }
 
 COOLDOWN = 3  # a line isn't reused until this many others of the same intent have been said
@@ -88,14 +89,15 @@ def _times(n: int) -> str:
 
 
 class Speaker:
-    def __init__(self, persona: Persona, rng: random.Random | None = None):
+    def __init__(self, persona: Persona, rng: random.Random | None = None, base: dict[str, list[str]] | None = None):
         self.persona = persona
+        self.base = LINES if base is None else base
         self.rng = rng or random.Random()
         self.recent: dict[str, deque] = {}
         self.fallback = None  # optional (text, persona, slots) -> str | None, e.g. an LLM; off by default
 
     def lines(self, intent: str) -> list[str]:
-        return LINES.get(intent, []) + self.persona.voice.get(intent, [])
+        return self.base.get(intent, []) + self.persona.voice.get(intent, [])
 
     def line(self, intent: str, **slots) -> str:
         options = self.lines(intent)
@@ -106,8 +108,8 @@ class Speaker:
         choice = self.rng.choice(fresh)
         if len(options) > 1:
             recent.append(choice)
-        s = _Slots(me=self.persona.name, cls=self.persona.cls, race=self.persona.race, summary=self.persona.summary,
-                   **slots)
+        s = _Slots(dict(me=self.persona.name, cls=self.persona.cls, race=self.persona.race,
+                        summary=self.persona.summary) | slots)
         for k in ("mob", "nemesis", "times", "mood"):
             if k in s:
                 s[f"{k}_cap"] = _cap(str(s[k]))

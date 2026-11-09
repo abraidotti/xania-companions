@@ -105,3 +105,21 @@ def test_the_dispatch_gets_bot_pages(tmp_path):
     assert "<svg class='chart'" in page and "reached level 2" in page and "Sewers" in page
     assert "predicted vs seen" in page and "42%" in page
     assert "Lvlknia" in (site / "index.html").read_text(encoding="utf-8")
+
+
+def test_the_killer_is_whoever_was_hitting_not_the_last_target():
+    from xania_sim.events import attacker
+
+    assert attacker("Your pierce hits the gutter rat.\nThe small spider's slash splits your head.\n") == "the small spider"
+    assert attacker("The small spider's trip misses your left shin.\n") == "the small spider"
+    assert attacker("The small spider is here, fighting YOU!\n") == "the small spider"
+    assert attacker("Hassan tells you 'it's your turn'\nYour slash hits the rat's head.\n") is None
+    db = sqlite3.connect(":memory:")
+    rec = Recorder(db, FakeBot(), level=1)
+    rec.target = "a gutter rat"  # what it last chose to fight...
+    rec.feed("The small spider's slash splits your head.\n", _prompt(hp=2))  # ...isn't what's killing it
+    rec.feed("You have been KILLED!!\n", _prompt(hp=1))
+    died = Progress(db).events("Lvlknia", ("died",))[0]
+    assert died["data"]["killer"] == "the small spider"
+    close = Progress(db).events("Lvlknia", ("close_call",))[0]
+    assert close["data"]["against"] == "the small spider" and close["data"]["hp"] == 2
