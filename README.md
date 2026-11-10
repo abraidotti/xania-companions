@@ -10,10 +10,12 @@ Sim stays a testing tool; the history before the split is Sim's.
 
 ## Setup
 
-Python 3.12+, with sibling checkouts of xania-explorer and xania-sim:
+Python 3.12+, in its own virtual environment. Xania Companions is pinned to Xania Sim **v0.1**: Sim's modules move
+after that, and Companions will move to a newer Sim when it's updated for the new layout.
 
 ```
-pip install -e ../xania-explorer -e ../xania-sim -e .[dev]
+pip install -e ../xania-explorer        # or: pip install "xania-explorer @ git+https://github.com/abraidotti/xania-explorer"
+pip install -e .[dev,sim]               # installs xania-sim at v0.1 from GitHub
 ```
 
 ## Commands

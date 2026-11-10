@@ -11,8 +11,8 @@ dependencies = []  # stdlib only, plus xania-sim (and through it xania-explorer)
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.24"]
-# For a fresh setup; with sibling checkouts, `pip install -e ../xania-explorer -e ../xania-sim` instead.
-sim = ["xania-sim @ git+https://github.com/abraidotti/xania-sim"]
+# Pinned to Xania Sim v0.1 (its module layout changes after that).
+sim = ["xania-sim @ git+https://github.com/abraidotti/xania-sim@v0.1"]
 
 [tool.setuptools.packages.find]
 include = ["xania_companions*"]
