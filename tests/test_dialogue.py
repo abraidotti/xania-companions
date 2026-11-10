@@ -3,9 +3,9 @@
 import random
 import sqlite3
 
-from xania_sim.dialogue import LINES, Speaker, classify
-from xania_sim.memory import Keeper, Memory
-from xania_sim.persona import PERSONAS_DIR, load, plain, roster
+from xania_companions.dialogue import LINES, Speaker, classify
+from xania_companions.memory import Keeper, Memory
+from xania_companions.persona import PERSONAS_DIR, load, plain, roster
 
 
 def test_shipped_personas_load_and_every_line_formats():

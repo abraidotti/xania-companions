@@ -3,19 +3,19 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "xania-sim"
+name = "xania-companions"
 version = "0.1.0"
-description = "Xania Sim: bots that play the Xania MUD over telnet: company, bug finding and feature tests"
+description = "Xania Companions: rule-based companion bots for the Xania MUD that play beside you and write their own legends"
 requires-python = ">=3.12"
-dependencies = []  # the core is stdlib only, plus xania-explorer (see the "explorer" extra and README)
+dependencies = []  # stdlib only, plus xania-sim (and through it xania-explorer); see README
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.24"]
-# For a fresh setup or CI; with a sibling checkout, `pip install -e ../xania-explorer` instead.
-explorer = ["xania-explorer @ git+https://github.com/abraidotti/xania-explorer"]
+# For a fresh setup; with sibling checkouts, `pip install -e ../xania-explorer -e ../xania-sim` instead.
+sim = ["xania-sim @ git+https://github.com/abraidotti/xania-sim"]
 
 [tool.setuptools.packages.find]
-include = ["xania_sim*"]
+include = ["xania_companions*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "scenarios"]

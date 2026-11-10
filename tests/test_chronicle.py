@@ -1,7 +1,7 @@
 """Legends from an event log: highlights, journals, epithets, the fallen, cursed places and the digest."""
 
-from xania_sim import chronicle as C
-from xania_sim.persona import plain, roster
+from xania_companions import chronicle as C
+from xania_companions.persona import plain, roster
 
 T0 = 1_700_000_000.0
 
@@ -81,7 +81,7 @@ def test_legends_reach_the_dispatch(tmp_path):
     from xania_sim import dispatch as D
     from xania_sim.events import Progress, Recorder
     from xania_sim.findings import Journal
-    from xania_sim.legends import gather, text
+    from xania_companions.legends import gather, text
     from xania_sim.parsers import Prompt
 
     class Bot:

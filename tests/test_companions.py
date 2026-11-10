@@ -4,7 +4,7 @@ import asyncio
 import time
 from pathlib import Path
 
-from xania_sim.companions import Entry, Roster, Runner, in_window, load_roster, minutes_left
+from xania_companions.companions import Entry, Roster, Runner, in_window, load_roster, minutes_left
 
 MIDNIGHT = time.mktime((2026, 11, 7, 0, 0, 0, 0, 0, -1))  # a Saturday, local time
 

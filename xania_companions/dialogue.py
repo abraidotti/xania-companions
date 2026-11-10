@@ -157,7 +157,7 @@ def level_areas(world, cls: str, level: int, log=None, limit: int = 3) -> list[s
     from xania_explorer import api
     from xania_explorer.assess import mobs as M
 
-    from .fight import safe_targets
+    from xania_sim.fight import safe_targets
 
     targets = safe_targets(world, cls, level, log)
     dist = api.distances(world, api.RECALL_ROOM)

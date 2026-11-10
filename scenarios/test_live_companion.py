@@ -4,10 +4,10 @@ tell and chatting with it."""
 import asyncio
 import sqlite3
 
-from xania_sim.companion import Companion
+from xania_companions.companion import Companion
 from xania_sim.events import parse
 from xania_sim.nav import Navigator
-from xania_sim.persona import roster
+from xania_companions.persona import roster
 from xania_sim.rooms import Fingerprints
 from xania_sim.session import Profile
 

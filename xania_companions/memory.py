@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import time
 
-from .events import attacker, parse
+from xania_sim.events import attacker, parse
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS memories (

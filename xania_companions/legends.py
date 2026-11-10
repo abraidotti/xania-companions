@@ -12,7 +12,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from . import chronicle as C
-from .events import Progress
+from xania_sim.events import Progress
 from .memory import Memory
 from .persona import Persona, plain, roster
 

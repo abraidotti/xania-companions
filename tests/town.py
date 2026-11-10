@@ -1,3 +1,4 @@
+# Copied from xania-sim tests/test_nav.py: the fake town (AREA, Town) the companion tests walk in.
 """Navigation against a small fake world: the map comes from an Explorer World built from area text, and the fake MUD
 renders rooms the way room_look does (xania/src/act_info.cpp)."""
 

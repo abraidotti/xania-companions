@@ -1,4 +1,4 @@
-# Copy to roster.toml and edit, then: python -m xania_sim companions --roster roster.toml
+# Copy to roster.toml and edit, then: python -m xania_companions companions --roster roster.toml
 
 master = "Sandro"      # your character: companions take orders from them and post their journals to them
 host = "127.0.0.1"

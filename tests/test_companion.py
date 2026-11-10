@@ -5,9 +5,9 @@ import asyncio
 import pytest
 
 from fake_mud import FakeMud
-from test_nav import AREA, Town
+from town import AREA, Town
 from xania_explorer.areafile.world import load_world
-from xania_sim.companion import Companion, command_of, parse_group
+from xania_companions.companion import Companion, command_of, parse_group
 from xania_sim.nav import Navigator
 from xania_sim.session import Bot, Profile
 

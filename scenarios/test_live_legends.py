@@ -1,7 +1,7 @@
 """Legends in the game itself: a journal posted as a note that another player can read, and an epithet worn as a
 title."""
 
-from xania_sim.chronicle import post_note
+from xania_companions.chronicle import post_note
 from xania_sim.session import Profile
 
 

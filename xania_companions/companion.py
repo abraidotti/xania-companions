@@ -33,13 +33,13 @@ from dataclasses import dataclass
 from xania_explorer import api
 
 from .dialogue import Speaker, level_areas
-from .events import parse
-from .fight import recover
+from xania_sim.events import parse
+from xania_sim.fight import recover
 from .memory import Keeper, Memory
 from .persona import Persona, plain
-from .nav import Navigator, NavError
-from .rooms import parse_view
-from .session import Bot
+from xania_sim.nav import Navigator, NavError
+from xania_sim.rooms import parse_view
+from xania_sim.session import Bot
 
 HEALS = ("heal", "cure critical", "cure serious", "cure light")  # best first
 BUFFS = ("armor", "bless")
@@ -199,7 +199,7 @@ class Companion:
         here = self.nav.here
         if here is None or here not in self.world.rooms:
             return "somewhere I don't recognise"
-        from .rooms import plain
+        from xania_sim.rooms import plain
 
         area = self.world.room_area.get(here)
         return f"{plain(self.world.rooms[here].name).strip()}" + (f" in {area.name}" if area else "")
@@ -274,7 +274,7 @@ class Companion:
         if self.memory is None:
             return
         from .chronicle import epithets
-        from .events import Progress
+        from xania_sim.events import Progress
 
         earned = epithets(Progress(self.memory.db).timeline(self.bot.name))
         if not earned or earned[0].title == self.epithet:

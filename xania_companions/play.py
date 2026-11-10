@@ -1,5 +1,5 @@
-"""``python -m xania_sim companion`` and ``python -m xania_sim level``: one bot playing for a while, with everything it
-does recorded in the event log (so ``status`` and the dispatch show it).
+"""``python -m xania_companions companion``: one companion playing beside you for a while, with everything it does
+recorded in Xania Sim's event log (so ``python -m xania_sim status`` shows it).
 
 Both connect to a MUD that's already running (``--port``; 9000 is the usual one), or start an isolated test MUD
 with ``--test-mud``. A bot's password is ``--password`` (default ``botpass1``); a new name creates the character.
@@ -12,17 +12,17 @@ import contextlib
 import time
 from pathlib import Path
 
-from . import world as W
+from xania_sim import world as W
 from .companion import Companion
-from .events import Recorder
-from .fight import FightLog, MobIndex
-from .level import Leveller
-from .nav import Navigator
+from xania_sim.events import Recorder
+from xania_sim.fight import FightLog, MobIndex
+from xania_sim.level import Leveller
+from xania_sim.nav import Navigator
 from .persona import Persona, plain, roster
-from .rooms import Fingerprints
-from .server import TestMud
-from .session import Bot, Profile
-from .store import Lore
+from xania_sim.rooms import Fingerprints
+from xania_sim.server import TestMud
+from xania_sim.session import Bot, Profile
+from xania_sim.store import Lore
 
 
 async def _with_mud(test_mud: bool, port: int, play):
@@ -42,7 +42,7 @@ def _setup(bot: Bot, w, cls: str, race: str, lore: Lore, run_id: str):
 async def post_journal(bot: Bot, persona: Persona, lore: Lore, since: float, to: str) -> list[str]:
     """The session's journal entry, posted as a note to ``to`` (a name, "all", or "" for none). Returns it."""
     from .chronicle import journal, post_note
-    from .events import Progress
+    from xania_sim.events import Progress
 
     pr = Progress(lore.db)
     entry = journal(persona, pr.timeline(bot.name, since=since), pr.timeline(bot.name, until=since))
@@ -85,51 +85,19 @@ async def companion(persona: Persona, master: str, minutes: float, port: int, te
         lore.close()
 
 
-async def level(name: str, cls: str, race: str, goal: int, minutes: float, port: int, test_mud: bool,
-                password: str) -> None:
-    w, lore = W.load(), Lore()
-    runs = Path("runs") / f"level-{time.strftime('%Y%m%d-%H%M%S')}"
-
-    async def play(host, port):
-        bot = Bot(name, password, host=host, port=port, transcript_dir=runs)  # autoloot off: it crashes debug builds (do_get)
-        await bot.enter(Profile(race=race, cls=cls))
-        nav, rec, lev = _setup(bot, w, cls, race, lore, "level")
-        rec.level = await lev.level()
-        rec.snapshot()
-        try:
-            rep = await lev.run(goal_level=goal, budget=minutes * 60)
-        finally:
-            rec.snapshot()
-            with contextlib.suppress(Exception):
-                await bot.quit()
-        print(f"{bot.name}: level {rep.start_level} -> {rep.level} in {rep.seconds / 60:.0f} min; {rep.kills} kills, "
-              f"{rep.flees} flees, {rep.deaths} deaths, {rep.xp} xp ({rep.reason}). Transcript: {bot.transcript}")
-
-    try:
-        await _with_mud(test_mud, port, play)
-    finally:
-        lore.close()
-
-
 def add_commands(sub) -> None:
-    for cmd, help_ in (("companion", "a bot that follows you and takes orders by tell (tell it 'help')"),
-                       ("level", "a bot that levels on its own, survival first")):
-        p = sub.add_parser(cmd, help=help_)
-        p.add_argument("name", nargs="?", help="the bot's character name (created if new; default: the persona's)")
-        p.add_argument("--persona", help="a persona from personas/ (e.g. bram, hilda, wren): name, class, voice, traits")
-        if cmd == "companion":
-            p.add_argument("--master", required=True, help="your character's name: the one it takes orders from")
-            p.add_argument("--notes", default="master",
-                           help="post its journal as an in-game note at the end: master (default), all, none, or a name")
-        else:
-            p.add_argument("--goal", type=int, default=5, help="stop at this level")
-        p.add_argument("--cls", help="mage, cleric, knight or barbarian (default: the persona's, else "
-                       + ("cleric)" if cmd == "companion" else "knight)"))
-        p.add_argument("--race", help="default: the persona's, else human")
-        p.add_argument("--minutes", type=float, default=60)
-        p.add_argument("--port", type=int, default=9000)
-        p.add_argument("--test-mud", action="store_true", help="start an isolated test MUD on --port instead")
-        p.add_argument("--password", default="botpass1")
+    p = sub.add_parser("companion", help="a bot that follows you and takes orders by tell (tell it 'help')")
+    p.add_argument("name", nargs="?", help="the bot's character name (created if new; default: the persona's)")
+    p.add_argument("--persona", help="a persona from personas/ (e.g. bram, hilda, wren): name, class, voice, traits")
+    p.add_argument("--master", required=True, help="your character's name: the one it takes orders from")
+    p.add_argument("--notes", default="master",
+                   help="post its journal as an in-game note at the end: master (default), all, none, or a name")
+    p.add_argument("--cls", help="mage, cleric, knight or barbarian (default: the persona's, else cleric)")
+    p.add_argument("--race", help="default: the persona's, else human")
+    p.add_argument("--minutes", type=float, default=60)
+    p.add_argument("--port", type=int, default=9000)
+    p.add_argument("--test-mud", action="store_true", help="start an isolated test MUD on --port instead")
+    p.add_argument("--password", default="botpass1")
 
 
 def persona_for(args) -> Persona:
@@ -140,7 +108,7 @@ def persona_for(args) -> Persona:
         raise SystemExit(f"no persona {args.persona!r}; there are: {', '.join(sorted(people))}")
     if not key:
         raise SystemExit("give the bot a name, or --persona")
-    p = people.get(key) or plain(args.name, "cleric" if args.cmd == "companion" else "knight")
+    p = people.get(key) or plain(args.name, "cleric")
     if args.name:
         p.name = args.name.capitalize()
     p.cls, p.race = args.cls or p.cls, args.race or p.race
@@ -149,7 +117,4 @@ def persona_for(args) -> Persona:
 
 def run(args) -> None:
     p = persona_for(args)
-    if args.cmd == "companion":
-        asyncio.run(companion(p, args.master, args.minutes, args.port, args.test_mud, args.password, args.notes))
-    else:
-        asyncio.run(level(p.name, p.cls, p.race, args.goal, args.minutes, args.port, args.test_mud, args.password))
+    asyncio.run(companion(p, args.master, args.minutes, args.port, args.test_mud, args.password, args.notes))

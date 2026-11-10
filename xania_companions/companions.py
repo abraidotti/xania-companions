@@ -1,6 +1,6 @@
 """The companions runner: a roster of bots living on your MUD, all weekend.
 
-    python -m xania_sim companions --roster roster.toml
+    python -m xania_companions companions --roster roster.toml
 
 The roster (see ``roster.example.toml``) names the master, the MUD and each bot: its persona, whether it's a
 ``companion`` (takes your orders; hunts on its own while you're away) or a ``leveller``, its daily window
@@ -168,12 +168,12 @@ class Runner:
 
     async def play_session(self, e: Entry, minutes: float) -> str:
         """One real session on the roster's MUD."""
-        from . import world as W
+        from xania_sim import world as W
         from .companion import Companion
         from .persona import plain, roster as personas
         from .play import _setup, post_journal
-        from .session import Bot, Profile
-        from .store import Lore
+        from xania_sim.session import Bot, Profile
+        from xania_sim.store import Lore
 
         p = personas().get(e.persona.lower()) or plain(e.persona)
         if e.name:
@@ -211,7 +211,7 @@ class Runner:
         return why
 
     async def _keep_wsl(self):
-        from .server import DISTRO, ON_WINDOWS
+        from xania_sim.server import DISTRO, ON_WINDOWS
 
         if not ON_WINDOWS:
             return None
